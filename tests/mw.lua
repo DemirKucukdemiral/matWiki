@@ -228,7 +228,23 @@ local ok, err = xpcall(function()
   truth(decoded and decoded.shell and decoded.shell:find('Kernel Test', 1, true), 'fragment JSON contains rendered shell')
   server.stop(true)
 
-  -- 5. Performance benchmark on spectral-workbench.mw
+  -- 5. UI standalone setup, dashboard, and doctor
+  local matwiki = require('matwiki').setup({
+    root = root,
+    vault = tmp,
+    cache_dir = tmp .. '/cache',
+    standalone = true,
+  })
+  local ui = require('matwiki.ui')
+  ui.dashboard(matwiki.config)
+  local dash_lines = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n')
+  truth(dash_lines:find('M A T W I K I', 1, true) and dash_lines:find('New .mw note', 1, true),
+    'dashboard renders MatWiki home screen with .mw shortcut')
+  ui.doctor(matwiki.config)
+  local doc_lines = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n')
+  truth(doc_lines:find('MatWiki dependency check', 1, true), 'doctor screen renders')
+
+  -- 6. Performance benchmark on spectral-workbench.mw
   local bench_src = mw.util.read_file(root .. '/notebook/spectral-workbench.mw')
   local t0 = uv.hrtime()
   local runs = 50

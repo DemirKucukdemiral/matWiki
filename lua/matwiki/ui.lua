@@ -83,7 +83,7 @@ function M.setup(c)
       vim.opt_local.textwidth = 0
       vim.keymap.set('n', 'j', 'gj', { buffer = true })
       vim.keymap.set('n', 'k', 'gk', { buffer = true })
-      vim.cmd([[syntax match MatwikiLink /\[\[[^\]]\+\]\]/]])
+      vim.cmd([=[syntax match MatwikiLink /\[\[[^\]]\+\]\]/]=])
     end,
   })
 end
