@@ -1,0 +1,7 @@
+.state/
+.matwiki-build/
+**/.matwiki-build/
+*.swp
+*.swo
+__pycache__/
+.DS_Store

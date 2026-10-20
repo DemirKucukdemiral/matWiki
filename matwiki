@@ -1,0 +1,40 @@
+#!/bin/sh
+# Portable launcher. All app state stays beside MatWiki unless overridden.
+set -eu
+MATWIKI_HOME=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+export MATWIKI_HOME
+export MATWIKI_STATE_DIR="${MATWIKI_STATE_DIR:-$MATWIKI_HOME/.state}"
+export NVIM_APPNAME=matwiki
+export XDG_CONFIG_HOME="$MATWIKI_STATE_DIR/config"
+export XDG_DATA_HOME="$MATWIKI_STATE_DIR/data"
+export XDG_STATE_HOME="$MATWIKI_STATE_DIR/state"
+export XDG_CACHE_HOME="$MATWIKI_STATE_DIR/cache"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --vault)
+      [ "$#" -ge 2 ] || { echo 'Usage: matwiki --vault /path/to/notes' >&2; exit 2; }
+      export MATWIKI_VAULT="$2"
+      shift 2 ;;
+    --doctor) exec python3 "$MATWIKI_HOME/scripts/doctor.py" ;;
+    --test) exec sh "$MATWIKI_HOME/tests/run.sh" ;;
+    --help|-h)
+      cat <<'EOF'
+MatWiki — a local maths notebook inside Neovim
+
+  ./matwiki                       Open the notebook dashboard
+  ./matwiki --vault /path/to/notes  Use another notebook
+  ./matwiki /absolute/path.tex     Open a file
+  ./matwiki --doctor               Check installed tools
+  ./matwiki --test                 Run the integration tests
+
+Requires Neovim 0.12.4+. See README.md for macOS and Linux setup.
+Space ? opens the command palette. :MatwikiHelp opens the guide.
+All remaining arguments go to Neovim. No plugins download at startup.
+EOF
+      exit 0 ;;
+    *) break ;;
+  esac
+done
+command -v nvim >/dev/null 2>&1 || { echo 'MatWiki needs Neovim 0.12.4+. See README.md.' >&2; exit 1; }
+mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME"
+exec nvim -u "$MATWIKI_HOME/init.lua" "$@"

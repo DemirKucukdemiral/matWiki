@@ -1,0 +1,44 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage[margin=1in]{geometry}
+\usepackage[colorlinks=true,linkcolor=blue]{hyperref}
+\newtheorem{theorem}{Theorem}
+\newcommand{\R}{\mathbb{R}}
+\title{The Spectral Theorem}
+\author{MatWiki}
+\date{}
+\begin{document}
+\maketitle
+
+\begin{theorem}
+Every real symmetric matrix $A\in\R^{n\times n}$ has an orthonormal basis
+of real eigenvectors. Equivalently, $A=Q\Lambda Q^{\mathsf T}$ for an
+orthogonal matrix $Q$ and a real diagonal matrix $\Lambda$.
+\end{theorem}
+
+\begin{proof}
+Induct on $n$. The result is immediate for $n=1$. The real function
+$x\mapsto x^{\mathsf T}Ax$ attains a maximum on the unit sphere.
+By Lagrange multipliers, a maximiser $v$ satisfies $Av=\lambda v$.
+For $w\perp v$, symmetry gives
+\[
+  \langle Aw,v\rangle=\langle w,Av\rangle
+  =\lambda\langle w,v\rangle=0.
+\]
+Thus $v^\perp$ is invariant under $A$, and the restriction is symmetric.
+Apply the induction hypothesis on $v^\perp$ and append $v$ to the resulting
+orthonormal eigenbasis.
+\end{proof}
+
+\section*{Example}
+\[
+  A=\begin{pmatrix}2&1\\1&2\end{pmatrix},\qquad
+  Q=\frac{1}{\sqrt{2}}\begin{pmatrix}1&1\\1&-1\end{pmatrix},\qquad
+  \Lambda=\begin{pmatrix}3&0\\0&1\end{pmatrix}.
+\]
+
+% Wiki connections live in comments so the document compiles cleanly.
+% [[linear-algebra]]
+% [[00-start-here]]
+\end{document}
