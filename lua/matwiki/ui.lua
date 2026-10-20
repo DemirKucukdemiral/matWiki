@@ -116,7 +116,8 @@ function M.dashboard(c)
     '  n   New Markdown note         s   Search contents',
     '  x   New LaTeX note            e   Files & code',
     '  d   Today’s note              p   Export HTML site',
-    '  g   New folder', '',
+    '  g   New folder                v   Switch / new vault',
+    '  y   Sync vault (Git)', '',
     '  CONTINUE',
   }
   local recent = {}
@@ -148,7 +149,8 @@ function M.dashboard(c)
       vim.api.nvim_buf_set_extmark(buf, ns, i - 1, 2, { end_col = 3, hl_group = 'MatwikiKey' })
     end
   end
-  local commands = { w = 'MatwikiMw', n = 'MatwikiNew', x = 'MatwikiTex', d = 'MatwikiDaily', g = 'MatwikiFolder', f = 'MatwikiFind',
+  local commands = { w = 'MatwikiMw', n = 'MatwikiNew', x = 'MatwikiTex', d = 'MatwikiDaily', g = 'MatwikiFolder',
+    v = 'MatwikiVault', y = 'MatwikiSync', f = 'MatwikiFind',
     s = 'MatwikiSearch', e = 'MatwikiFiles', p = 'MatwikiExportVault', ['?'] = 'MatwikiCommands', h = 'MatwikiHelp',
     c = 'MatwikiConfig', D = 'MatwikiDoctor' }
   for key, command in pairs(commands) do

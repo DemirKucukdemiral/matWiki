@@ -186,6 +186,14 @@ local ok, err = xpcall(function()
   vim.cmd("MatwikiLink Research/next-idea.mw")
   truth(vim.api.nvim_get_current_line():find("[[Research/next-idea.mw]]", 1, true), "link command accepts a destination")
 
+  truth(vim.fn.isdirectory(vault .. "/.git") == 1, "vault automatically initializes its own .git repo")
+  truth(vim.fn.filereadable(vault .. "/.gitignore") == 1, "vault automatically writes .gitignore")
+  truth(wiki.sync(), "MatwikiSync commits notes in the vault")
+  local second_vault = outside .. "/second-vault"
+  vim.cmd("MatwikiVault " .. second_vault)
+  truth(vim.fn.isdirectory(second_vault .. "/.git") == 1, "MatwikiVault creates and Git-initializes a new vault")
+  truth(vim.fn.filereadable(second_vault .. "/.gitignore") == 1, "MatwikiVault writes .gitignore in new vault")
+
   -- Exercise real floating window creation/cleanup, including the cancel callback.
   picker.choose = actual_choose
   local cancelled = false

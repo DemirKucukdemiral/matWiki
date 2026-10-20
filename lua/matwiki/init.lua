@@ -84,6 +84,8 @@ M.actions = {
   { 'nn', 'New Markdown note', 'MatwikiNew' },
   { 'nx', 'New LaTeX note', 'MatwikiTex' },
   { 'ng', 'Create or open a folder', 'MatwikiFolder' },
+  { 'nv', 'Switch or create a vault (Git-backed)', 'MatwikiVault' },
+  { 'ny', 'Sync vault with Git', 'MatwikiSync' },
   { 'nd', 'Today’s daily note', 'MatwikiDaily' },
   { 'nf', 'Find a note', 'MatwikiFind' },
   { 'ns', 'Search note contents', 'MatwikiSearch' },

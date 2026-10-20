@@ -533,16 +533,129 @@ function M.backlinks()
   end)
 end
 
+function M.ensure_git(vault_dir)
+  vault_dir = normalize(vault_dir or root)
+  if config.root and vault_dir == normalize(config.root .. "/notebook") then return false end
+  local gitignore = vault_dir .. "/.gitignore"
+  if not uv.fs_stat(gitignore) then
+    pcall(vim.fn.writefile, {
+      ".site/",
+      "**/.site/",
+      ".matwiki-build/",
+      "**/.matwiki-build/",
+      "*.swp",
+      "*.swo",
+      "__pycache__/",
+      ".DS_Store",
+    }, gitignore)
+  end
+  if config.git_init ~= false and not uv.fs_stat(vault_dir .. "/.git") and vim.fn.executable("git") == 1 then
+    local res = vim.system({ "git", "init", "-q", vault_dir }, { text = true }):wait(5000)
+    return res and res.code == 0 or false
+  end
+  return uv.fs_stat(vault_dir .. "/.git") ~= nil
+end
+
+function M.vault(target)
+  if not target or vim.trim(target) == "" then
+    local default_parent = root and (vim.fs.dirname(root) .. "/") or (vim.fn.expand("~/Documents") .. "/")
+    vim.ui.input({ prompt = "Open or create vault folder: ", default = default_parent }, function(value)
+      if value and vim.trim(value) ~= "" then M.vault(value) end
+    end)
+    return
+  end
+  local requested = normalize(vim.fn.expand(vim.trim(target)))
+  local ok, err = pcall(vim.fn.mkdir, requested, "p")
+  if not ok then notify("Cannot create vault: " .. tostring(err), vim.log.levels.ERROR); return nil end
+  local app = package.loaded["matwiki"]
+  if app and app.config then
+    app.config.vault = requested
+    M.setup(app.config)
+    pcall(function() require("matwiki.runner").setup(app.config) end)
+    pcall(function() require("matwiki.latex").setup(app.config) end)
+    pcall(function() require("matwiki.mw").setup(app.config) end)
+    if app.config.standalone then
+      pcall(function() require("matwiki.ui").dashboard(app.config) end)
+    end
+  else
+    config.vault = requested
+    M.setup(config)
+  end
+  notify("Vault ready (Git-initialized): " .. root)
+  return root
+end
+
+function M.sync(remote_url)
+  if not root then return false end
+  if vim.fn.executable("git") ~= 1 then
+    notify("git is not installed.", vim.log.levels.ERROR)
+    return false
+  end
+  M.ensure_git(root)
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].modified then
+      local name = normalize(vim.api.nvim_buf_get_name(buf))
+      if within(name) then pcall(vim.api.nvim_buf_call, buf, function() vim.cmd("silent! write") end) end
+    end
+  end
+  local function git(args)
+    local cmd = { "git", "-C", root }
+    vim.list_extend(cmd, args)
+    return vim.system(cmd, { text = true }):wait(15000)
+  end
+  if remote_url and vim.trim(remote_url) ~= "" then
+    remote_url = vim.trim(remote_url)
+    local has_origin = git({ "remote", "get-url", "origin" })
+    if has_origin and has_origin.code == 0 then
+      git({ "remote", "set-url", "origin", remote_url })
+    else
+      git({ "remote", "add", "origin", remote_url })
+    end
+  end
+  git({ "add", "-A" })
+  local status = git({ "status", "--porcelain" })
+  local committed = false
+  if status and status.code == 0 and vim.trim(status.stdout or "") ~= "" then
+    local msg = "MatWiki sync " .. os.date("%Y-%m-%d %H:%M:%S")
+    local c = git({ "commit", "-m", msg })
+    if not c or c.code ~= 0 then
+      c = git({ "-c", "user.name=MatWiki", "-c", "user.email=matwiki@local", "commit", "-m", msg })
+    end
+    committed = c and c.code == 0 or false
+  end
+  local origin = git({ "remote", "get-url", "origin" })
+  if origin and origin.code == 0 and vim.trim(origin.stdout or "") ~= "" then
+    local branch_res = git({ "rev-parse", "--abbrev-ref", "HEAD" })
+    local branch = (branch_res and branch_res.code == 0 and vim.trim(branch_res.stdout or "") ~= "")
+      and vim.trim(branch_res.stdout) or "master"
+    git({ "pull", "--rebase", "origin", branch })
+    local push = git({ "push", "-u", "origin", "HEAD" })
+    if push and push.code == 0 then
+      notify("Vault synced with origin (" .. vim.trim(origin.stdout) .. ")")
+      return true
+    else
+      notify("Committed locally, but push failed: " .. vim.trim((push and push.stderr) or ""), vim.log.levels.WARN)
+      return false
+    end
+  end
+  notify((committed and "Committed notes in " or "Vault up to date in ") .. root
+    .. " (run :MatwikiSync <git-url> to connect a remote)")
+  return true
+end
+
 function M.setup(options)
   config = options or {}
   local requested = normalize(vim.fn.expand(assert(config.vault, "MatWiki requires config.vault")))
   vim.fn.mkdir(requested, "p")
   root = normalize(assert(uv.fs_realpath(requested), "Cannot access the MatWiki vault"))
+  M.ensure_git(root)
   local commands = {
     MatwikiMw = { function(args) M.new("mw", args.args ~= "" and args.args or nil) end, "*" },
     MatwikiNew = { function(args) M.new("markdown", args.args ~= "" and args.args or nil) end, "*" },
     MatwikiTex = { function(args) M.new("tex", args.args ~= "" and args.args or nil) end, "*" },
     MatwikiFolder = { function(args) M.folder(args.args ~= "" and args.args or nil) end, "*" },
+    MatwikiVault = { function(args) M.vault(args.args ~= "" and args.args or nil) end, "*" },
+    MatwikiSync = { function(args) M.sync(args.args ~= "" and args.args or nil) end, "*" },
     MatwikiDaily = { M.daily, 0 }, MatwikiFind = { M.find, 0 },
     MatwikiSearch = { function(args) M.search(args.args ~= "" and args.args or nil) end, "*" },
     MatwikiFollow = { function() M.follow_link() end, 0 },
