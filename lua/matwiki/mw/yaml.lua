@@ -37,6 +37,7 @@ local function flow(s, i)
           if q == "'" and s:sub(j + 1, j + 1) == "'" then j = j + 2 else break end
         else j = j + 1 end
       end
+      if j > #s then error('Unclosed quoted value') end
       local raw = s:sub(i, j)
       i = j + 1
       return scalar(raw), true
@@ -56,14 +57,16 @@ local function flow(s, i)
       while true do
         ws()
         if s:sub(i, i) == '}' then i = i + 1 break end
-        if i > #s then break end
+        if i > #s then error('Unclosed flow map') end
         local key = str_or_plain({ [':'] = true, ['}'] = true, [','] = true })
         ws()
-        if s:sub(i, i) == ':' then i = i + 1 end
+        if key == nil or s:sub(i, i) ~= ':' then error('Expected a key and colon in flow map') end
+        i = i + 1
         local v = value()
         if key ~= nil then map[tostring(key)] = v end
         ws()
-        if s:sub(i, i) == ',' then i = i + 1 end
+        if s:sub(i, i) == ',' then i = i + 1
+        elseif s:sub(i, i) ~= '}' then error('Expected comma or closing brace in flow map') end
       end
       return map
     elseif c == '[' then
@@ -72,10 +75,11 @@ local function flow(s, i)
       while true do
         ws()
         if s:sub(i, i) == ']' then i = i + 1 break end
-        if i > #s then break end
+        if i > #s then error('Unclosed flow list') end
         list[#list + 1] = value()
         ws()
-        if s:sub(i, i) == ',' then i = i + 1 end
+        if s:sub(i, i) == ',' then i = i + 1
+        elseif s:sub(i, i) ~= ']' then error('Expected comma or closing bracket in flow list') end
       end
       return list
     end

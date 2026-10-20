@@ -97,6 +97,33 @@ local function html_rel_for_note(rel_note)
 end
 M._html_rel_for_note = html_rel_for_note
 
+-- Copy referenced local figures as well as generated <note>.assets folders.
+-- Keep vault-relative media in the same layout and map external relative media
+-- into a note-specific asset directory so export never writes outside out_root.
+local function export_asset_map(src_path, dst_path, out_root, vault)
+  local source_dir, dst_dir = U.dirname(src_path), U.dirname(dst_path)
+  return function(src)
+    if src:find('^%a[%w+.-]*:') or src:sub(1, 1) == '#' then return nil end
+    local path, suffix = src:match('^(.-)([?#].*)$')
+    path, suffix = path or src, suffix or ''
+    path = path:gsub('%%(%x%x)', function(h) return string.char(tonumber(h, 16)) end)
+    local abs = U.normalize(path:sub(1, 1) == '/' and ((vault or source_dir) .. path) or (source_dir .. '/' .. path))
+    local st = uv and uv.fs_stat(abs)
+    if not st or st.type ~= 'file' then return nil end
+    local dst
+    if vault and abs:sub(1, #vault + 1) == vault .. '/' then
+      dst = out_root .. '/' .. abs:sub(#vault + 2)
+    elseif abs:sub(1, #source_dir + 1) == source_dir .. '/' then
+      dst = dst_dir .. '/' .. abs:sub(#source_dir + 2)
+    else
+      local key = vim.fn.sha256(abs):sub(1, 12)
+      dst = dst_dir .. '/' .. U.stem(src_path) .. '.assets/' .. key .. '-' .. U.basename(abs)
+    end
+    if U.normalize(dst) ~= abs and not copy_file(abs, dst) then return nil end
+    return U.url_path(U.relpath(dst_dir, dst)) .. suffix
+  end
+end
+
 --- Compile a single .mw or .md file on disk to HTML.
 function M.compile_file(src_path, dst_path, opts)
   opts = opts or {}
@@ -138,6 +165,7 @@ function M.compile_file(src_path, dst_path, opts)
     wiki = opts.wiki,
     backlinks = opts.backlinks,
     title = U.stem(src_path),
+    asset_map = not opts.standalone and export_asset_map(src_path, dst_path, out_root, vault) or nil,
   }
 
   local page, doc, frag = M.render(text, render_opts)
@@ -164,7 +192,7 @@ function M.compile_file(src_path, dst_path, opts)
   }
 end
 
-local function scan_vault_notes(vault)
+local function scan_vault_notes(vault, include_tex, output_dir)
   local excluded = {
     code = true, build = true, dist = true, node_modules = true,
     vendor = true, target = true, __pycache__ = true, assets = true, site = true,
@@ -178,9 +206,9 @@ local function scan_vault_notes(vault)
       if not name then break end
       if name:sub(1, 1) ~= '.' then
         local p = dir .. '/' .. name
-        if kind == 'directory' and not excluded[name] and not name:match('%.assets$') then
+        if kind == 'directory' and p ~= output_dir and not excluded[name] and not name:match('%.assets$') then
           walk(p)
-        elseif kind == 'file' and (name:match('%.mw$') or name:match('%.md$')) then
+        elseif kind == 'file' and (name:match('%.mw$') or name:match('%.md$') or (include_tex and name:match('%.tex$'))) then
           notes[#notes + 1] = p
         end
       end
@@ -192,46 +220,41 @@ local function scan_vault_notes(vault)
 end
 M._scan_vault_notes = scan_vault_notes
 
-local function extract_raw_wikilinks(text)
+local function extract_raw_wikilinks(text, front_matter_end)
   local links, fence = {}, nil
-  for _, line in ipairs(U.split_lines(text)) do
-    local m = line:match('^%s*(```+)') or line:match('^%s*(~~~+)')
-    if m then
-      if not fence then fence = m else fence = nil end
-    elseif not fence then
-      local pos = 1
-      while true do
-        local a, b, inner = line:find('%[%[([^%]]+)%]%]', pos)
-        if not a then break end
-        if a == 1 or line:sub(a - 1, a - 1) ~= '!' then
-          links[#links + 1] = { target = inner:match('^([^|]*)') or inner, line = U.trim(line) }
-        end
-        pos = b + 1
+  for num, line in ipairs(U.split_lines(text)) do
+    if num > (front_matter_end or 0) then
+      if fence then
+        if B._fence_close(line, fence) then fence = nil end
+      elseif B._fence_open(line) then
+        fence = B._fence_open(line)
+      else
+        I.render(line, { wiki = function(target)
+          links[#links + 1] = { target = target, line = U.trim(line) }
+          return '#'
+        end })
       end
     end
   end
   return links
 end
 
---- Compile an entire vault of .mw and .md notes into a linked static HTML site.
-function M.export_vault(opts)
+-- One resolver shared by static export and live preview. File paths keep their
+-- spelling; only heading text is slugged, and explicit IDs are preserved.
+function M.vault_index(opts)
   opts = opts or {}
-  local t0 = hrtime_ms()
   local vault = U.normalize(opts.vault or M.config.vault)
-  local root = opts.matwiki_root or M.config.root
   local out_dir = U.normalize(opts.out_dir or (vault .. '/.site'))
-  mkdir_p(out_dir)
-  M.ensure_site_assets(out_dir, root)
-
-  local files = scan_vault_notes(vault)
+  local files = scan_vault_notes(vault, true, out_dir)
   local entries, by_rel, by_stem, by_slug = {}, {}, {}, {}
 
   for _, path in ipairs(files) do
     local rel = path:sub(#vault + 2)
-    local html_rel = html_rel_for_note(rel)
+    local is_tex = path:match('%.tex$') ~= nil
+    local html_rel = is_tex and rel or html_rel_for_note(rel)
     local stem = rel:gsub('%.[^./]+$', '')
     local base = U.basename(stem)
-    local text = U.read_file(path) or ''
+    local text = (opts.read_file or U.read_file)(path) or ''
     local entry = {
       path = path,
       rel = rel,
@@ -241,40 +264,72 @@ function M.export_vault(opts)
       html_abs = out_dir .. '/' .. html_rel,
       text = text,
       ext = path:match('%.([^./]+)$'),
+      is_tex = is_tex,
       backlinks = {},
     }
     entries[#entries + 1] = entry
     by_rel[rel] = entry
-    by_rel[stem] = entry
-    by_stem[base] = by_stem[base] or entry
-    by_slug[U.slug(base)] = by_slug[U.slug(base)] or entry
+    if not by_rel[stem] or entry.ext == 'mw' then by_rel[stem] = entry end
+    by_stem[base] = by_stem[base] or {}
+    by_stem[base][#by_stem[base] + 1] = entry
+    by_slug[U.slug(base)] = by_slug[U.slug(base)] or {}
+    by_slug[U.slug(base)][#by_slug[U.slug(base)] + 1] = entry
+    entry.doc = not is_tex and B.parse(text) or nil
+    entry.title = entry.doc and ((entry.doc.meta.title and I.plain(tostring(entry.doc.meta.title)))
+      or (entry.doc.toc[1] and I.plain(entry.doc.toc[1].text))) or base
+  end
+  for _, e in ipairs(entries) do
+    if e.ext == 'md' and by_rel[e.stem .. '.mw'] then
+      e.html_rel = e.stem .. '.md.html'
+      e.html_abs = out_dir .. '/' .. e.html_rel
+    end
   end
 
+  local function lookup(path)
+    path = U.normalize(path):gsub('^/', '')
+    if path == '..' or path:sub(1, 3) == '../' then return nil end
+    return by_rel[path]
+  end
+  local function unambiguous(list, ext)
+    local found
+    for _, e in ipairs(list or {}) do
+      if not ext or e.ext == ext then
+        if found and found.stem ~= e.stem then return nil end
+        if not found or e.ext == 'mw' then found = e end
+      end
+    end
+    return found
+  end
   local function resolve_entry(target, from_entry)
     local page, anchor = (target or ''):match('^(.-)#(.*)$')
     page = U.trim(page or target or '')
     if page == '' then return from_entry, anchor end
-    local clean = page:gsub('%.mw$', ''):gsub('%.md$', ''):gsub('%.tex$', '')
+    local ext = page:match('%.(mw)$') or page:match('%.(md)$') or page:match('%.(tex)$')
+    local clean = ext and page:sub(1, -#ext - 2) or page
+    -- Paths inserted by MatWiki are relative to the vault root.
+    if (page:find('/', 1, true) or ext) and not page:match('^%.%.?/') then
+      local direct = lookup(page)
+      if direct then return direct, anchor end
+    end
+    if not ext and not page:find('/', 1, true) then
+      return unambiguous(by_stem[clean], ext) or unambiguous(by_slug[U.slug(clean)], ext), anchor
+    end
     if from_entry then
       local dir = U.dirname(from_entry.rel)
-      if dir ~= '.' then
-        local rel_cand = by_rel[dir .. '/' .. page] or by_rel[dir .. '/' .. clean]
-        if rel_cand then return rel_cand, anchor end
-      end
+      local rel_cand = lookup(dir .. '/' .. page)
+      if rel_cand then return rel_cand, anchor end
     end
-    local e = by_rel[page] or by_rel[clean] or by_stem[clean] or by_slug[U.slug(clean)]
+    local e = lookup(page)
+    if not e and not page:find('/', 1, true) then
+      e = unambiguous(by_stem[clean], ext) or unambiguous(by_slug[U.slug(clean)], ext)
+    end
     return e, anchor
   end
 
   -- First pass: parse titles and build the backlink graph.
   for _, e in ipairs(entries) do
-    local doc = B.parse(e.text)
-    e.doc = doc
-    e.title = (doc.meta and doc.meta.title and I.plain(tostring(doc.meta.title)))
-      or (doc.toc and doc.toc[1] and I.plain(doc.toc[1].text))
-      or e.base
     local seen_targets = {}
-    for _, wl in ipairs(extract_raw_wikilinks(e.text)) do
+    for _, wl in ipairs(e.doc and extract_raw_wikilinks(e.text, e.doc.front_matter_end) or {}) do
       local target_entry = resolve_entry(wl.target, e)
       if target_entry and target_entry ~= e and not seen_targets[target_entry.rel] then
         seen_targets[target_entry.rel] = true
@@ -287,39 +342,74 @@ function M.export_vault(opts)
     end
   end
 
-  -- Second pass: render HTML pages with resolved wiki links and backlinks.
-  for _, e in ipairs(entries) do
-    local dst_dir = U.dirname(e.html_abs)
-    local asset_prefix = U.relpath(dst_dir, out_dir .. '/assets')
-    local index_href = U.relpath(dst_dir, out_dir .. '/index.html')
+  local index_rel = 'index.html'
+  while true do
+    local collision = false
+    for _, e in ipairs(entries) do if e.html_rel == index_rel then collision = true; break end end
+    if not collision then break end
+    index_rel = '_' .. index_rel
+  end
+
+  local function render_options(e, dst_dir)
     local backlinks = {}
     for _, bl in ipairs(e.backlinks) do
       backlinks[#backlinks + 1] = {
-        href = U.relpath(dst_dir, bl.from.html_abs),
+        href = U.url_path(U.relpath(dst_dir, bl.from.html_abs)),
         title = bl.title,
         excerpt = bl.excerpt,
       }
     end
-    local function wiki_resolver(target)
-      local target_entry, anchor = resolve_entry(target, e)
-      if not target_entry then return nil end
-      local href = U.relpath(dst_dir, target_entry.html_abs)
-      if href == '.' then href = U.basename(target_entry.html_abs) end
-      if anchor and anchor ~= '' then href = href .. '#' .. U.slug(anchor) end
-      return href
-    end
-    local page = H.render_page(e.doc, {
+    return {
+      backlinks = backlinks,
+      wiki = function(target)
+        local target_entry, anchor = resolve_entry(target, e)
+        if not target_entry then return nil end
+        local href = U.url_path(U.relpath(dst_dir, target_entry.html_abs))
+        if anchor and anchor ~= '' and not target_entry.is_tex then
+          local id = target_entry.doc.labels[anchor] and anchor or U.slug(anchor)
+          href = href .. '#' .. U.url_path(id)
+        end
+        return href
+      end,
+    }
+  end
+  return { entries = entries, by_rel = by_rel, resolve = resolve_entry,
+    render_options = render_options, index_rel = index_rel, out_dir = out_dir }
+end
+
+--- Compile .mw/.md pages and carry .tex source notes into a linked offline site.
+function M.export_vault(opts)
+  opts = opts or {}
+  local t0 = hrtime_ms()
+  local vault = U.normalize(opts.vault or M.config.vault)
+  local root = opts.matwiki_root or M.config.root
+  local out_dir = U.normalize(opts.out_dir or (vault .. '/.site'))
+  mkdir_p(out_dir)
+  M.ensure_site_assets(out_dir, root)
+  local index = M.vault_index({ vault = vault, out_dir = out_dir })
+  local entries = index.entries
+  local compiled, sources = 0, 0
+
+  -- Second pass: render HTML pages with resolved wiki links and backlinks.
+  for _, e in ipairs(entries) do
+    local dst_dir = U.dirname(e.html_abs)
+    local asset_prefix = U.relpath(dst_dir, out_dir .. '/assets')
+    local index_href = U.relpath(dst_dir, out_dir .. '/' .. index.index_rel)
+    local links = index.render_options(e, dst_dir)
+    local page = e.is_tex and e.text or H.render_page(e.doc, {
       matwiki_root = root,
       source_dir = U.dirname(e.path),
+      asset_map = export_asset_map(e.path, e.html_abs, out_dir, vault),
       asset_prefix = asset_prefix,
       index_href = index_href,
-      wiki = wiki_resolver,
-      backlinks = backlinks,
+      wiki = links.wiki,
+      backlinks = links.backlinks,
       live = opts.live,
       title = e.title,
     })
     mkdir_p(dst_dir)
     U.write_file(e.html_abs, page)
+    if e.is_tex then sources = sources + 1 else compiled = compiled + 1 end
     local note_assets = U.dirname(e.path) .. '/' .. e.base .. '.assets'
     if uv and uv.fs_stat(note_assets) then
       copy_tree(note_assets, dst_dir .. '/' .. e.base .. '.assets')
@@ -331,11 +421,12 @@ function M.export_vault(opts)
   for _, e in ipairs(entries) do
     local badge = '.' .. (e.ext or 'mw')
     local cells = 0
-    for _, b in ipairs(e.doc.blocks) do if b.cell then cells = cells + 1 end end
+    for _, b in ipairs(e.doc and e.doc.blocks or {}) do if b.cell then cells = cells + 1 end end
     local meta_parts = { badge, e.rel }
+    if e.is_tex then meta_parts[#meta_parts + 1] = 'LaTeX source' end
     if cells > 0 then meta_parts[#meta_parts + 1] = cells .. (cells == 1 and ' cell' or ' cells') end
     if #e.backlinks > 0 then meta_parts[#meta_parts + 1] = #e.backlinks .. ' backlinks' end
-    cards[#cards + 1] = '<a class="mw-index-card" href="' .. U.esc(e.html_rel) .. '" data-search="'
+    cards[#cards + 1] = '<a class="mw-index-card" href="' .. U.esc(U.url_path(e.html_rel)) .. '" data-search="'
       .. U.esc((e.title .. ' ' .. e.rel):lower()) .. '">'
       .. '<div class="mw-index-card-title">' .. U.esc(e.title) .. '</div>'
       .. '<div class="mw-index-card-meta">' .. U.esc(table.concat(meta_parts, ' · ')) .. '</div>'
@@ -345,7 +436,7 @@ function M.export_vault(opts)
   local index_md = table.concat({
     '---',
     'title: MatWiki Notebook',
-    'subtitle: "' .. #entries .. ' compiled notes (.mw + .md)"',
+    'subtitle: "' .. compiled .. ' compiled notes (.mw + .md)' .. (sources > 0 and ('; ' .. sources .. ' LaTeX sources') or '') .. '"',
     'toc: false',
     '---',
     '',
@@ -364,16 +455,17 @@ function M.export_vault(opts)
   local index_html = H.render_page(index_doc, {
     matwiki_root = root,
     asset_prefix = 'assets',
-    index_href = 'index.html',
+    index_href = index.index_rel,
     live = opts.live,
   })
-  U.write_file(out_dir .. '/index.html', index_html)
+  U.write_file(out_dir .. '/' .. index.index_rel, index_html)
 
   return {
     ok = true,
     out_dir = out_dir,
-    index = out_dir .. '/index.html',
-    count = #entries,
+    index = out_dir .. '/' .. index.index_rel,
+    count = compiled,
+    source_count = sources,
     entries = entries,
     elapsed_ms = hrtime_ms() - t0,
   }

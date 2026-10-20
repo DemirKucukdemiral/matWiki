@@ -126,6 +126,66 @@ local ok, err = xpcall(function()
   eq(picker.score("linear-algebra", "xyz"), nil, "fuzzy nonmatch")
   truth(picker.score("algebra", "alg") < picker.score("a-long-gap", "alg"), "consecutive matches rank first")
 
+  -- Create a note and its parent folders directly from the normal new-note command.
+  local nested_mw = wiki.new("mw", "Research/Control/Linear Systems.mw")
+  eq(nested_mw, vault .. "/Research/Control/linear-systems.mw", "new note preserves nested folders without a doubled extension")
+  truth(vim.fn.readfile(nested_mw)[2] == 'title: "Linear Systems"', "front matter has just the note title")
+  local nested_tex = wiki.new("tex", "Research/Proofs/Some Sets.tex")
+  eq(nested_tex, vault .. "/Research/Proofs/some-sets.tex", "nested TeX creation")
+  eq(wiki.new("mw", "../outside"), nil, "new-note command rejects traversal")
+  eq(wiki.new("mw", "escape-dir/nope"), nil, "new-note command rejects escaped symlink parents")
+  eq(wiki.new("mw", "Research/"), nil, "a folder path needs a note title")
+  eq(wiki.new("mw", "Research/other.md"), nil, "mismatched extension is explained instead of silently renamed")
+  eq(wiki.new("mw", "Research/No#Anchor"), nil, "new paths must remain representable in wiki links")
+  eq(wiki.new("mw", "Research/picture.assets/hidden"), nil, "new notes cannot be created in excluded asset folders")
+  local folder = wiki.folder("Research/New area/Nested")
+  eq(folder, vault .. "/Research/New area/Nested", "folder command creates nested parents")
+  truth(vim.fn.isdirectory(folder) == 1, "new folder exists")
+  eq(wiki.folder("Research/New area/Nested"), folder, "existing folders reopen")
+  eq(wiki.folder("escape-dir/new"), nil, "folder creation rejects external symlink parents")
+  eq(wiki.folder("../outside"), nil, "folder command rejects traversal")
+  eq(wiki.folder("linear-algebra.md"), nil, "folder cannot replace an existing note")
+  local prompted_default
+  vim.ui.input = function(opts) prompted_default = opts.default end
+  wiki.new("mw")
+  eq(prompted_default, "Research/New area/Nested/", "new-note prompt starts in the browsed folder")
+
+  -- Exact paths inserted by the picker remain unambiguous, unlike bare titles.
+  local collision = write("analysis/analysis/limit.md")
+  eq(wiki.resolve("analysis/limit.md", source), { nested }, "explicit path uses vault root before source-local namesake")
+  eq(wiki.resolve("limit.md", source), { top }, "explicit filename uses vault root")
+  local local_note = write("analysis/unique.md")
+  eq(wiki.resolve("unique.md", source), { local_note }, "explicit filename falls back to source folder")
+  vim.cmd.edit(vim.fn.fnameescape(source))
+  vim.api.nvim_buf_set_lines(0, 0, -1, false, { "See " })
+  vim.api.nvim_win_set_cursor(0, { 1, 4 })
+  wiki.insert_link("analysis/limit.md#Notes|Limit")
+  eq(vim.api.nvim_get_current_line(), "See[[analysis/limit.md#Notes|Limit]] ", "direct link retains anchor and display text")
+  local original_buffer = vim.api.nvim_get_current_buf()
+  vim.api.nvim_buf_set_lines(0, 0, -1, false, { "" })
+  vim.api.nvim_win_set_cursor(0, { 1, 0 })
+  vim.ui.select = function(_, _, callback) callback("Create", 1) end
+  wiki.insert_link("Research/Next Idea.mw")
+  eq(vim.api.nvim_get_current_buf(), original_buffer, "create and link keeps the source note open")
+  eq(vim.api.nvim_get_current_line(), "[[Research/next-idea.mw]]", "create and link inserts canonical path")
+  truth(vim.fn.filereadable(vault .. "/Research/next-idea.mw") == 1, "create and link writes its destination")
+  vim.ui.select = function(_, _, callback) callback(nil, 2) end
+  wiki.insert_link("Research/cancelled.mw")
+  truth(vim.fn.filereadable(vault .. "/Research/cancelled.mw") == 0, "cancelled link does not create a note")
+  wiki.insert_link()
+  truth(picks[#picks].items[1].create, "link picker always offers a create action")
+  vim.ui.input = function(_, callback) callback("Research/From Picker.mw") end
+  vim.ui.select = function(_, _, callback) callback("Create", 1) end
+  picks[#picks].callback(picks[#picks].items[1])
+  truth(vim.fn.filereadable(vault .. "/Research/from-picker.mw") == 1, "link picker can create a new note")
+
+  vim.cmd("MatwikiFolder Command/Folder")
+  truth(vim.fn.isdirectory(vault .. "/Command/Folder") == 1, "folder command is registered")
+  vim.cmd("MatwikiMw Command/Folder/From Command")
+  eq(vim.api.nvim_buf_get_name(0), vault .. "/Command/Folder/from-command.mw", "new-note command handles paths with spaces")
+  vim.cmd("MatwikiLink Research/next-idea.mw")
+  truth(vim.api.nvim_get_current_line():find("[[Research/next-idea.mw]]", 1, true), "link command accepts a destination")
+
   -- Exercise real floating window creation/cleanup, including the cancel callback.
   picker.choose = actual_choose
   local cancelled = false

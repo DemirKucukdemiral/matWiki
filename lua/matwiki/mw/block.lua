@@ -8,6 +8,7 @@ local B = {}
 local MATH_ENVS = {
   equation = true, align = true, gather = true, multline = true, flalign = true,
   alignat = true, eqnarray = true, CD = true, displaymath = true,
+  aligned = true, alignedat = true, gathered = true,
 }
 
 --- Theorem-like and callout environments for `::: name` blocks.
@@ -169,12 +170,13 @@ local function prepare_math(tex)
     local body = tex:match('^%s*\\begin{' .. env .. '%*?}(.*)\\end{' .. env .. '%*?}%s*$')
     if body then
       numbered_env = star == '' and env ~= 'displaymath' and env ~= 'CD'
+        and env ~= 'aligned' and env ~= 'alignedat' and env ~= 'gathered'
       local map = ENV_MAP[env]
       if map then tex = map[1] .. body .. map[2] end
     end
   end
   tex = U.trim(tex)
-  if tag then tex = tex .. ' \\tag{' .. tag .. '}' end
+  -- MatWiki renders the tag in the margin; retaining it in KaTeX duplicates it.
   return tex, labels, numbered_env, tag
 end
 
@@ -328,8 +330,8 @@ parse = function(lines, nums, st)
         local prev = nodes[#nodes]
         if prev and prev.t == 'code' and not prev.output then prev.output = node else add(node) end
       elseif lang == 'math' or lang == 'latex-display' then
-        local tex, labels, numbered = prepare_math(text)
-        add({ t = 'math', tex = tex, id = attrs.id or labels[1], numbered = numbered, line = ln, attrs = attrs })
+        local tex, labels, numbered, tag = prepare_math(text)
+        add({ t = 'math', tex = tex, id = attrs.id or labels[1], numbered = numbered, tag = tag, line = ln, attrs = attrs })
       else
         add({ t = 'code', lang = lang, attrs = attrs, code = text, line = ln, end_line = nums[math.min(j, n)] })
       end
@@ -654,14 +656,14 @@ local function number(doc, opts)
         end
         label(node.id, node.number and ('§' .. node.number) or U.esc(I.plain(node.text)), node.line)
       elseif t == 'math' then
-        if node.id or node.numbered then
+        if node.id or node.numbered or node.tag then
           if node.tag then
             node.number = node.tag
           else
             counters.eq = counters.eq + 1
             node.number = tostring(counters.eq)
           end
-          node.id = node.id or ('eq-' .. counters.eq)
+          node.id = node.id or unique('eq-' .. counters.eq)
           seen[node.id] = true
           label(node.id, '(' .. U.esc(node.number) .. ')', node.line)
         end
@@ -690,8 +692,8 @@ local function number(doc, opts)
       elseif t == 'code' then
         local kv = node.attrs.kv
         local run = kv.run
-        local is_cell = (runnable[node.lang] and run ~= 'never' and run ~= 'false')
-          or (node.output ~= nil and node.lang ~= '')
+        local is_cell = run ~= 'never' and run ~= 'false'
+          and (runnable[node.lang] or (node.output ~= nil and node.lang ~= ''))
         if is_cell and not node.indented then
           counters.cell = counters.cell + 1
           node.cell = counters.cell

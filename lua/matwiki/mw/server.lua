@@ -54,17 +54,6 @@ local function respond(sock, status, content_type, body)
   end)
 end
 
-local function find_source_for_req(vault, rel_html)
-  local stem = rel_html:gsub('%.html$', '')
-  for _, ext in ipairs({ '.mw', '.md' }) do
-    local cand = U.normalize(vault .. '/' .. stem .. ext)
-    if cand:sub(1, #vault + 1) == vault .. '/' and uv.fs_stat(cand) then
-      return cand
-    end
-  end
-  return nil
-end
-
 local function buffer_text_or_file(abs_path)
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(buf) then
@@ -78,23 +67,24 @@ local function buffer_text_or_file(abs_path)
   return U.read_file(abs_path)
 end
 
-local function render_live_note(src_path, rel_html, fragment_only)
+local function render_live_note(index, entry, rel_html, fragment_only)
   local c = state.config
-  local text = buffer_text_or_file(src_path)
-  if not text then return nil end
-  local doc = B.parse(text)
+  local doc = entry.doc
   local depth = 0
   for _ in rel_html:gmatch('/') do depth = depth + 1 end
   local prefix = depth > 0 and string.rep('../', depth) .. 'assets' or 'assets'
-  local index_href = depth > 0 and string.rep('../', depth) .. 'index.html' or 'index.html'
+  local index_href = depth > 0 and string.rep('../', depth) .. index.index_rel or index.index_rel
+  local links = index.render_options(entry, U.dirname(entry.html_abs))
   return H.render_page(doc, {
     matwiki_root = c.root,
-    source_dir = U.dirname(src_path),
+    source_dir = U.dirname(entry.path),
     asset_prefix = prefix,
     index_href = index_href,
     live = true,
     fragment_only = fragment_only,
-    title = U.stem(src_path),
+    wiki = links.wiki,
+    backlinks = links.backlinks,
+    title = entry.title,
   })
 end
 
@@ -140,7 +130,12 @@ local function handle_request(sock, raw)
     end
   end
 
-  if path == '/' or path == '/index.html' then
+  local rel = path:sub(2)
+  local index
+  if path == '/' or rel:match('%.html$') then
+    index = mw.vault_index({ vault = vault, out_dir = vault, read_file = buffer_text_or_file })
+  end
+  if path == '/' or (index and rel == index.index_rel) then
     local res = mw.export_vault({
       vault = vault,
       matwiki_root = root,
@@ -151,15 +146,17 @@ local function handle_request(sock, raw)
     if data then return respond(sock, '200 OK', TYPES.html, data) end
   end
 
-  local rel = path:sub(2)
   if rel:match('%.html$') then
-    local src = find_source_for_req(vault, rel)
-    if src then
+    local entry
+    for _, e in ipairs(index.entries) do
+      if e.html_rel == rel and not e.is_tex then entry = e; break end
+    end
+    if entry then
       if query and query:find('fragment=1', 1, true) then
-        local shell, macros = render_live_note(src, rel, true)
+        local shell, macros = render_live_note(index, entry, rel, true)
         return respond(sock, '200 OK', TYPES.json, U.json({ shell = shell, macros = macros }))
       else
-        local page = render_live_note(src, rel, false)
+        local page = render_live_note(index, entry, rel, false)
         return respond(sock, '200 OK', TYPES.html, page)
       end
     end
@@ -200,6 +197,7 @@ function S.start(config, port)
   local srv = uv.new_tcp()
   local ok, err = srv:bind('127.0.0.1', port or 0)
   if not ok then
+    srv:close()
     vim.notify('MatWiki preview bind failed: ' .. tostring(err), vim.log.levels.ERROR)
     return nil
   end
@@ -272,7 +270,10 @@ function S.url_for(path)
   path = U.normalize(path or '')
   if path ~= '' and path:sub(1, #vault + 1) == vault .. '/' then
     local rel = path:sub(#vault + 2)
-    return string.format('http://127.0.0.1:%d/%s', state.port, mw._html_rel_for_note(rel))
+    local index = mw.vault_index({ vault = vault, out_dir = vault })
+    local entry = index.by_rel[rel]
+    local target = entry and entry.html_rel or mw._html_rel_for_note(rel)
+    return string.format('http://127.0.0.1:%d/%s', state.port, U.url_path(target))
   end
   return string.format('http://127.0.0.1:%d/index.html', state.port)
 end

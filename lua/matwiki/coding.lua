@@ -11,8 +11,12 @@ function M.setup(config)
     gopls = { cmd = { 'gopls' }, filetypes = { 'go' }, root_markers = { 'go.mod', '.git' } },
   }
   for name, definition in pairs(config.lsp or {}) do
-    definitions[name] = definition == false and false or vim.tbl_deep_extend('force', definitions[name] or {}, definition)
-    if type(definition) == 'table' and definition.cmd then definitions[name].cmd = definition.cmd end
+    if definition == false then
+      definitions[name] = false
+    else
+      definitions[name] = vim.tbl_deep_extend('force', definitions[name] or {}, definition)
+      if definition.cmd then definitions[name].cmd = definition.cmd end
+    end
   end
   M.servers = definitions
   for name, definition in pairs(definitions) do
@@ -20,6 +24,8 @@ function M.setup(config)
       definition.workspace_required = false
       vim.lsp.config('matwiki_' .. name, definition)
       vim.lsp.enable('matwiki_' .. name)
+    elseif vim.lsp.is_enabled('matwiki_' .. name) then
+      vim.lsp.enable('matwiki_' .. name, false)
     end
   end
   vim.diagnostic.config({ severity_sort = true, virtual_text = false, float = { border = 'rounded' } })

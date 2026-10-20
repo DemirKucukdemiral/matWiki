@@ -1,4 +1,16 @@
 local M = {}
+local dashboard_windows = {}
+local dashboard_options = { 'number', 'relativenumber', 'signcolumn', 'cursorline' }
+
+local function restore_dashboard_window(win)
+  local saved = dashboard_windows[win]
+  if saved and vim.api.nvim_win_is_valid(win) then
+    for name, value in pairs(saved) do
+      vim.api.nvim_set_option_value(name, value, { win = win })
+    end
+  end
+  dashboard_windows[win] = nil
+end
 local function scratch(name, lines, ft)
   local buffer = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_name(buffer, 'matwiki://' .. name .. '/' .. buffer)
@@ -89,6 +101,12 @@ function M.setup(c)
 end
 
 function M.dashboard(c)
+  local win = vim.api.nvim_get_current_win()
+  restore_dashboard_window(win)
+  local saved_options = {}
+  for _, name in ipairs(dashboard_options) do
+    saved_options[name] = vim.api.nvim_get_option_value(name, { win = win })
+  end
   local files = require('matwiki.wiki').files()
   local lines = {
     '', '  M A T W I K I', '  A notebook for thinking in mathematics.', '',
@@ -97,7 +115,8 @@ function M.dashboard(c)
     '  w   New .mw note              f   Find a note',
     '  n   New Markdown note         s   Search contents',
     '  x   New LaTeX note            e   Files & code',
-    '  d   Today’s note              p   Export HTML site', '',
+    '  d   Today’s note              p   Export HTML site',
+    '  g   New folder', '',
     '  CONTINUE',
   }
   local recent = {}
@@ -118,6 +137,7 @@ function M.dashboard(c)
     ('  %d notes  /  .mw + Markdown + LaTeX  /  Neovim'):format(#files),
     '  Press i in a note to write. Escape returns to normal mode.', '' })
   local buf = scratch('home', lines)
+  dashboard_windows[win] = saved_options
   vim.wo.number, vim.wo.relativenumber, vim.wo.signcolumn = false, false, 'no'
   vim.wo.cursorline = false
   local ns = vim.api.nvim_create_namespace('MatwikiHome')
@@ -128,7 +148,7 @@ function M.dashboard(c)
       vim.api.nvim_buf_set_extmark(buf, ns, i - 1, 2, { end_col = 3, hl_group = 'MatwikiKey' })
     end
   end
-  local commands = { w = 'MatwikiMw', n = 'MatwikiNew', x = 'MatwikiTex', d = 'MatwikiDaily', f = 'MatwikiFind',
+  local commands = { w = 'MatwikiMw', n = 'MatwikiNew', x = 'MatwikiTex', d = 'MatwikiDaily', g = 'MatwikiFolder', f = 'MatwikiFind',
     s = 'MatwikiSearch', e = 'MatwikiFiles', p = 'MatwikiExportVault', ['?'] = 'MatwikiCommands', h = 'MatwikiHelp',
     c = 'MatwikiConfig', D = 'MatwikiDoctor' }
   for key, command in pairs(commands) do
@@ -140,7 +160,7 @@ function M.dashboard(c)
   end
   vim.api.nvim_win_set_cursor(0, { 2, 2 })
   vim.api.nvim_create_autocmd('BufWinLeave', { buffer = buf, once = true, callback = function()
-    vim.wo.number, vim.wo.relativenumber, vim.wo.signcolumn, vim.wo.cursorline = true, true, 'yes', true
+    if dashboard_windows[win] == saved_options then restore_dashboard_window(win) end
   end })
 end
 

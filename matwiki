@@ -1,7 +1,20 @@
 #!/bin/sh
 # Portable launcher. All app state stays beside MatWiki unless overridden.
 set -eu
-SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || printf '%s\n' "$0")
+# Resolve relative symlinks using readlink's portable form (macOS has no -f).
+SCRIPT_PATH=$0
+case "$SCRIPT_PATH" in
+  */*) ;;
+  *) SCRIPT_PATH=$(command -v "$SCRIPT_PATH") ;;
+esac
+while [ -L "$SCRIPT_PATH" ]; do
+  SCRIPT_DIR=$(CDPATH='' cd -P -- "$(dirname -- "$SCRIPT_PATH")" && pwd)
+  SCRIPT_PATH=$(readlink "$SCRIPT_PATH")
+  case "$SCRIPT_PATH" in
+    /*) ;;
+    *) SCRIPT_PATH=$SCRIPT_DIR/$SCRIPT_PATH ;;
+  esac
+done
 MATWIKI_HOME=$(CDPATH='' cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)
 export MATWIKI_HOME
 export MATWIKI_STATE_DIR="${MATWIKI_STATE_DIR:-$MATWIKI_HOME/.state}"

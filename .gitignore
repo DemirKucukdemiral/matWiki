@@ -7,3 +7,16 @@
 *.swo
 __pycache__/
 .DS_Store
+nvim.log
+user.local.lua
+
+# Ignore personal notes created in the default notebook/ directory
+# while keeping the starter demo files tracked for the repository:
+notebook/*
+!notebook/00-start-here.md
+!notebook/linear-algebra.md
+!notebook/spectral-theorem.tex
+!notebook/spectral-workbench.mw
+!notebook/code/
+notebook/code/*
+!notebook/code/scratch.py

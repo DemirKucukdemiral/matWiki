@@ -140,10 +140,42 @@ local function append_output(lines)
   end
 end
 
+-- Keep results attached to their original cell while the note is being edited.
+local function cell_writer(source, block)
+  local original = vim.api.nvim_buf_get_lines(source, block.open_row, block.close_row + 1, false)
+  local mark = vim.api.nvim_buf_set_extmark(source, ns, block.open_row, 0, {
+    end_row = block.close_row + 1, end_col = 0, right_gravity = true, end_right_gravity = false,
+  })
+  return function(lines, meta)
+    if not vim.api.nvim_buf_is_valid(source) then return false end
+    local position = vim.api.nvim_buf_get_extmark_by_id(source, ns, mark, { details = true })
+    pcall(vim.api.nvim_buf_del_extmark, source, ns, mark)
+    if not lines or #position == 0 or not position[3].end_row then return false end
+    if not vim.deep_equal(original, vim.api.nvim_buf_get_lines(source, position[1], position[3].end_row, false)) then
+      fail('Cell changed while running; its result was not written into the note.')
+      return false
+    end
+    return require('matwiki.mw').write_cell_output(source, position[1], lines, meta)
+  end
+end
+
+local function use_kernel(language, attrs)
+  return not cfg.custom_runners[language] and attrs.kv.session ~= 'none'
+    and require('matwiki.mw.kernel').supports(language)
+end
+
 function M.stop()
-  if state.job and state.job.id then
-    state.job.cancelled = true
-    vim.fn.jobstop(state.job.id)
+  if state.batch then state.batch.cancelled = true; state.batch = nil end
+  local current = state.job
+  if current then
+    current.cancelled = true
+    if current.kernel then
+      require('matwiki.mw.kernel').stop(current.source, current.language, current.session)
+    elseif current.process then
+      current.process:kill(15)
+    elseif current.id then
+      vim.fn.jobstop(current.id)
+    end
     return true
   end
   return false
@@ -170,19 +202,27 @@ function M.run()
   end
 
   -- In .mw buffers, use persistent kernel for Python/Node unless custom runner or session=none.
-  local ok_k, kernel = pcall(require, 'matwiki.mw.kernel')
+  local kernel = require('matwiki.mw.kernel')
   local attrs = block and require('matwiki.mw.util').parse_attrs(block.rest:match('%b{}')) or { kv = {} }
-  if is_mw and block and ok_k and kernel.supports(language) and attrs.kv.session ~= 'none' then
+  if is_mw and block and use_kernel(language, attrs) then
+    M.stop()
     state.generation = state.generation + 1
-    local current = { generation = state.generation, lines = 0, bytes = 0 }
+    local current = { generation = state.generation, lines = 0, bytes = 0,
+      kernel = true, source = source, language = language, session = attrs.kv.session }
+    local write_output = cell_writer(source, block)
+    local cell_id = 1
+    for index, cell in ipairs(require('matwiki.mw').find_cells(vim.api.nvim_buf_get_lines(source, 0, -1, false))) do
+      if cell.open_row == block.open_row then cell_id = index; break end
+    end
     state.job = current
-    kernel.eval(source, language, lines, { session = attrs.kv.session, cell = 1 }, function(res)
-      if current.generation ~= state.generation then return end
+    kernel.eval(source, language, lines, { session = attrs.kv.session, cell = cell_id }, function(res)
+      if current.generation ~= state.generation then write_output(); return end
       current.exit_code = res.ok and 0 or 1
       state.last_run = current
       state.job = nil
-      set_output(vim.list_extend({ 'MatWiki · ' .. language .. ' (kernel)', '' }, res.lines or {}))
-      require('matwiki.mw').write_cell_output(source, block.open_row, res.lines or {}, { error = not res.ok })
+      set_output(vim.list_extend({ 'MatWiki · ' .. language .. ' (kernel)', '' },
+        current.cancelled and { '[Stopped]' } or res.lines or {}))
+      write_output(not current.cancelled and (res.lines or {}) or nil, { error = not res.ok })
       pcall(function() require('matwiki.mw.server').broadcast() end)
     end)
     return 1
@@ -201,6 +241,7 @@ function M.run()
   state.generation = state.generation + 1
   local captured = {}
   local current = { generation = state.generation, file = file, partial = { stdout = '', stderr = '' }, bytes = 0, lines = 0 }
+  local write_output = is_mw and block and cell_writer(source, block) or function() end
   state.job = current
   set_output({ 'MatWiki · ' .. language, 'cwd: ' .. cwd, 'argv: ' .. vim.inspect(argv), '' })
   local previous_window = vim.api.nvim_get_current_win()
@@ -247,21 +288,22 @@ function M.run()
     on_stderr = function(_, data) receive('stderr', data) end,
     on_exit = function(_, code)
       vim.fn.delete(file)
-      if current.generation ~= state.generation then return end
+      if current.generation ~= state.generation then write_output(); return end
       for _, stream in ipairs({ 'stdout', 'stderr' }) do
         if current.partial[stream] ~= '' then emit(current.partial[stream]) end
       end
       current.exit_code = code
       append_output({ '', current.cancelled and '[Stopped · exit ' .. code .. ']' or '[Exit ' .. code .. ']' })
       if is_mw and block and not current.cancelled then
-        require('matwiki.mw').write_cell_output(source, block.open_row, captured, { error = code ~= 0 })
+        write_output(captured, { error = code ~= 0 })
         pcall(function() require('matwiki.mw.server').broadcast() end)
-      end
+      else write_output() end
       state.last_run = current
       state.job = nil
     end,
   })
   if id <= 0 then
+    write_output()
     vim.fn.delete(file)
     state.job = nil
     append_output({ '[Could not start process]' })
@@ -275,9 +317,17 @@ function M.run_all()
   local source = vim.api.nvim_get_current_buf()
   local mw = require('matwiki.mw')
   local kernel = require('matwiki.mw.kernel')
+  M.stop()
+  state.job = nil
+  state.generation = state.generation + 1
+  local batch = { generation = state.generation }
+  state.batch = batch
   local idx = 1
   local function step()
-    if not vim.api.nvim_buf_is_valid(source) then return end
+    if batch.cancelled or batch.generation ~= state.generation or not vim.api.nvim_buf_is_valid(source) then
+      if state.batch == batch then state.batch = nil end
+      return
+    end
     local cells = mw.find_cells(vim.api.nvim_buf_get_lines(source, 0, -1, false))
     while idx <= #cells do
       local c = cells[idx]
@@ -285,9 +335,17 @@ function M.run_all()
       if c.lang ~= '' and run_opt ~= 'never' and run_opt ~= 'false' and run_opt ~= 'manual' then
         local current_idx = idx
         idx = idx + 1
-        if kernel.supports(c.lang) and (not c.attrs.kv or c.attrs.kv.session ~= 'none') then
-          kernel.eval(source, c.lang, c.code, { cell = current_idx }, function(res)
-            mw.write_cell_output(source, c.open_row, res.lines or {}, { error = not res.ok })
+        if use_kernel(c.lang, c.attrs) then
+          local current = { generation = batch.generation, kernel = true, source = source,
+            language = c.lang, session = c.attrs.kv.session }
+          local write_output = cell_writer(source, c)
+          state.job = current
+          kernel.eval(source, c.lang, c.code, { cell = current_idx, session = c.attrs.kv.session }, function(res)
+            if current.generation ~= state.generation then write_output(); return end
+            state.job = nil
+            current.exit_code = res.ok and 0 or 1
+            state.last_run = current
+            write_output(not current.cancelled and (res.lines or {}) or nil, { error = not res.ok })
             step()
           end)
           return
@@ -296,22 +354,36 @@ function M.run_all()
           local argv = argv_for(cfg.runners[c.lang], file)
           if argv and vim.fn.executable(argv[1]) == 1 then
             vim.fn.writefile(c.code, file)
-            vim.system(argv, { cwd = cwd_for(source), text = true }, function(res)
+            local current = { generation = batch.generation, file = file }
+            local write_output = cell_writer(source, c)
+            state.job = current
+            local started, process = pcall(vim.system, argv, { cwd = cwd_for(source), text = true }, function(res)
               vim.schedule(function()
                 vim.fn.delete(file)
+                if current.generation ~= state.generation then write_output(); return end
+                state.job = nil
+                current.exit_code = res.code
+                state.last_run = current
                 local out = ((res.stdout or '') .. (res.stderr or '')):gsub('\r\n', '\n')
                 local out_lines = out ~= '' and vim.split(out:gsub('\n$', ''), '\n', { plain = true }) or {}
-                mw.write_cell_output(source, c.open_row, out_lines, { error = res.code ~= 0 })
+                write_output(not current.cancelled and out_lines or nil, { error = res.code ~= 0 })
                 step()
               end)
             end)
-            return
+            if started then current.process = process; return end
+            vim.fn.delete(file)
+            write_output()
+            state.job = nil
+            fail('Could not start ' .. argv[1] .. ': ' .. tostring(process))
+          else
+            fail('Skipped cell ' .. current_idx .. ': runner is invalid or its executable is unavailable.')
           end
         end
       else
         idx = idx + 1
       end
     end
+    if state.batch == batch then state.batch = nil end
     pcall(function() require('matwiki.mw.server').broadcast() end)
     vim.notify('MatWiki: Finished running all cells.')
   end
@@ -319,6 +391,7 @@ function M.run_all()
 end
 
 function M.restart_kernel()
+  M.stop()
   local n = require('matwiki.mw.kernel').restart(vim.api.nvim_get_current_buf())
   vim.notify('MatWiki: Restarted ' .. n .. ' kernel session(s).')
 end
@@ -412,6 +485,7 @@ function M.setup(config)
     vault = vim.fn.fnamemodify(config.vault or vim.fn.getcwd(), ':p'),
     cache_dir = config.cache_dir or vim.fs.joinpath(vim.fn.stdpath('cache'), 'matwiki'),
     runners = vim.tbl_deep_extend('force', vim.deepcopy(defaults), config.runners or {}),
+    custom_runners = vim.deepcopy(config.runners or {}),
     max_output_bytes = math.max(1024, tonumber(config.max_output_bytes) or 256 * 1024),
     max_output_lines = math.max(20, tonumber(config.max_output_lines) or 5000),
   }

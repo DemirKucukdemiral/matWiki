@@ -7,15 +7,16 @@ local K = {}
 local sessions = {}
 
 local PY_WORKER = [=[
-import ast, io, json, os, sys, traceback
+import ast, builtins, io, json, os, sys, traceback
 
 namespace = {"__name__": "__main__"}
 
-def install_mpl_hook(assets_dir, rel_assets, cell_id, emitted):
+def install_mpl_hook(assets_dir, rel_assets, cell_id, emitted, fig_counter):
     if "matplotlib.pyplot" not in sys.modules:
         return
     plt = sys.modules["matplotlib.pyplot"]
-    fig_counter = [0]
+    if not all(hasattr(plt, name) for name in ("figure", "get_fignums", "close")):
+        return
     def show(*args, **kwargs):
         figs = [plt.figure(n) for n in plt.get_fignums()]
         if not figs:
@@ -23,7 +24,7 @@ def install_mpl_hook(assets_dir, rel_assets, cell_id, emitted):
         os.makedirs(assets_dir, exist_ok=True)
         for fig in figs:
             fig_counter[0] += 1
-            suffix = f"-{fig_counter[0]}" if len(figs) > 1 else ""
+            suffix = f"-{fig_counter[0]}" if len(figs) > 1 or fig_counter[0] > 1 else ""
             fname = f"cell-{cell_id}{suffix}.png"
             full = os.path.join(assets_dir, fname)
             fig.savefig(full, dpi=144, bbox_inches="tight")
@@ -45,19 +46,25 @@ for raw in sys.stdin:
         os.chdir(cwd)
     buf = io.StringIO()
     emitted = []
+    fig_counter = [0]
     ok = True
     old_out, old_err = sys.stdout, sys.stderr
+    old_import = builtins.__import__
+    def import_with_mpl_hook(*args, **kwargs):
+        module = old_import(*args, **kwargs)
+        install_mpl_hook(assets_dir, rel_assets, cell_id, emitted, fig_counter)
+        return module
     sys.stdout = sys.stderr = buf
+    builtins.__import__ = import_with_mpl_hook
     try:
+        install_mpl_hook(assets_dir, rel_assets, cell_id, emitted, fig_counter)
         tree = ast.parse(code, filename=f"<cell-{cell_id}>", mode="exec")
         last_expr = None
         if tree.body and isinstance(tree.body[-1], ast.Expr):
             last_expr = ast.Expression(tree.body.pop().value)
         exec(compile(tree, f"<cell-{cell_id}>", "exec"), namespace)
-        install_mpl_hook(assets_dir, rel_assets, cell_id, emitted)
         if last_expr is not None:
             val = eval(compile(last_expr, f"<cell-{cell_id}>", "eval"), namespace)
-            install_mpl_hook(assets_dir, rel_assets, cell_id, emitted)
             if val is not None:
                 print(repr(val))
     except Exception:
@@ -65,6 +72,7 @@ for raw in sys.stdin:
         traceback.print_exc(limit=6)
     finally:
         sys.stdout, sys.stderr = old_out, old_err
+        builtins.__import__ = old_import
     text = buf.getvalue()
     lines = text.splitlines() if text else []
     lines.extend(emitted)
@@ -143,7 +151,8 @@ local function start_session(key, kind, cwd)
       end
     end,
     on_exit = function()
-      sessions[key] = nil
+      -- A restarted process can exit after its replacement has already started.
+      if sessions[key] == sess then sessions[key] = nil end
       while #sess.queue > 0 do
         local cb = table.remove(sess.queue, 1)
         cb({ ok = false, lines = { '[Kernel exited]' } })
@@ -189,8 +198,23 @@ function K.eval(buf, lang, code, opts, callback)
     rel_assets = rel_assets,
     cell = opts.cell or 1,
   }) .. '\n'
-  vim.fn.chansend(sess.id, payload)
+  local sent, err = pcall(vim.fn.chansend, sess.id, payload)
+  if not sent then
+    table.remove(sess.queue)
+    callback({ ok = false, lines = { 'Could not send code to kernel: ' .. tostring(err) } })
+    return false
+  end
   return true
+end
+
+function K.stop(buf, lang, session_name)
+  local kind = norm_lang(lang)
+  if not kind then return false end
+  local key = session_key(buf, kind, session_name)
+  local sess = sessions[key]
+  if not sess then return false end
+  sessions[key] = nil
+  return pcall(vim.fn.jobstop, sess.id)
 end
 
 function K.restart(buf)

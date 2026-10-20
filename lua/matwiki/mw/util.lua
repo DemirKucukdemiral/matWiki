@@ -88,7 +88,7 @@ function U.parse_attrs(s)
             local parts = {}
             while j <= n do
               local ch = s:sub(j, j)
-              if ch == '\\' and j < n then
+              if ch == '\\' and j < n and (s:sub(j + 1, j + 1) == q or s:sub(j + 1, j + 1) == '\\') then
                 parts[#parts + 1] = s:sub(j + 1, j + 1)
                 j = j + 2
               elseif ch == q then

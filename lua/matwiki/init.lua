@@ -34,7 +34,9 @@ function M.setup(opts)
   vim.api.nvim_create_user_command('MatwikiCommands', function() M.palette() end, {})
   vim.api.nvim_create_user_command('MatwikiDoctor', function() require('matwiki.ui').doctor(c) end, {})
   vim.api.nvim_create_user_command('MatwikiFiles', function()
+    local prev_err = vim.v.errmsg
     vim.cmd.edit(vim.fn.fnameescape(c.vault))
+    if vim.v.errmsg == 'E31: No such mapping' then vim.v.errmsg = prev_err end
   end, {})
   if c.keymaps then
     for _, action in ipairs(M.actions) do
@@ -81,6 +83,7 @@ M.actions = {
   { 'nw', 'New MatWiki (.mw) note', 'MatwikiMw' },
   { 'nn', 'New Markdown note', 'MatwikiNew' },
   { 'nx', 'New LaTeX note', 'MatwikiTex' },
+  { 'ng', 'Create or open a folder', 'MatwikiFolder' },
   { 'nd', 'Today’s daily note', 'MatwikiDaily' },
   { 'nf', 'Find a note', 'MatwikiFind' },
   { 'ns', 'Search note contents', 'MatwikiSearch' },

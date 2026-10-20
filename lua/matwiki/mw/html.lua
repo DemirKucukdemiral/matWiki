@@ -28,14 +28,15 @@ local MIME = {
 }
 
 local function resolve_asset(src, opts)
-  if not src or src:find('^%a[%w+.-]*:') or src:sub(1, 1) == '/' or src:sub(1, 1) == '#' then
+  if not src or src:find('^%a[%w+.-]*:') or src:sub(1, 1) == '#' then
     return src
   end
   if opts.standalone and opts.source_dir then
     local ext = (src:match('%.([^./]+)$') or ''):lower()
     local mime = MIME[ext]
     if mime then
-      local data = U.read_file(opts.source_dir .. '/' .. src)
+      local path = src:gsub('[?#].*$', ''):gsub('%%(%x%x)', function(h) return string.char(tonumber(h, 16)) end)
+      local data = U.read_file(opts.source_dir .. '/' .. path)
       if data then return 'data:' .. mime .. ';base64,' .. U.base64(data) end
     end
   end
@@ -334,12 +335,12 @@ local function render_toc(doc, ctx)
   return table.concat(parts, '\n')
 end
 
-local function render_header(doc, ctx)
+local function render_header(doc, ctx, anchor)
   local m = doc.meta or {}
   if not (m.title or m.subtitle or m.author or m.date or m.abstract or m.kernel or m.tags) then
     return ''
   end
-  local parts = { '<header class="mw-doc-header">' }
+  local parts = { '<header class="mw-doc-header"' .. (anchor and (' id="' .. esc(anchor) .. '"') or '') .. '>' }
   if m.title then parts[#parts + 1] = '<h1 class="mw-doc-title">' .. I.render(tostring(m.title), ctx) .. '</h1>' end
   if m.subtitle then parts[#parts + 1] = '<p class="mw-doc-subtitle">' .. I.render(tostring(m.subtitle), ctx) .. '</p>' end
   local meta_items = {}
@@ -383,14 +384,16 @@ end
 function H.render_fragment(doc, opts)
   local ctx = make_ctx(doc, opts)
   local blocks = doc.blocks
+  local title_anchor
   -- Avoid a duplicate H1 when front matter already defines `title`.
   if doc.meta and doc.meta.title and blocks[1] and blocks[1].t == 'heading' and blocks[1].level == 1
     and U.slug(I.plain(blocks[1].text)) == U.slug(I.plain(tostring(doc.meta.title))) then
     local trimmed = {}
+    title_anchor = blocks[1].id
     for k = 2, #blocks do trimmed[#trimmed + 1] = blocks[k] end
     blocks = trimmed
   end
-  local header = render_header(doc, ctx)
+  local header = render_header(doc, ctx, title_anchor)
   local body = render_blocks(blocks, ctx, doc)
   local footnotes = render_footnotes(ctx, doc)
   local backlinks = render_backlinks(opts and opts.backlinks)
@@ -457,7 +460,13 @@ local CLIENT_JS = [=[
     });
   }
 
-  bindUI();
+  // Inline scripts do not honor defer. Wait until the deferred KaTeX and
+  // highlight.js scripts have loaded before rendering the initial document.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bindUI, { once: true });
+  } else {
+    bindUI();
+  }
   window.__mwBindUI = bindUI;
 
   if (window.MW_LIVE) {
@@ -513,7 +522,8 @@ function H.render_page(doc, opts)
     katex_css = katex_css:gsub('url%(fonts/([%w_%-%.]+%.woff2)%)', function(font)
       local data = U.read_file(root_dir .. '/vendor/katex/fonts/' .. font)
       return data and ('url(data:font/woff2;base64,' .. U.base64(data) .. ')') or ('url(fonts/' .. font .. ')')
-    end):gsub('url%(fonts/[^%)]+%.woff%)%s*format%("woff"%),?', ''):gsub('url%(fonts/[^%)]+%.ttf%)%s*format%("truetype"%)', '')
+    end):gsub(',%s*url%(fonts/[^%)]+%.woff%)%s*format%("woff"%)', '')
+      :gsub(',%s*url%(fonts/[^%)]+%.ttf%)%s*format%("truetype"%)', '')
     local hl_light = U.read_file(root_dir .. '/vendor/highlight/github.min.css') or ''
     local hl_dark = U.read_file(root_dir .. '/vendor/highlight/github-dark.min.css') or ''
     local katex_js = U.read_file(root_dir .. '/vendor/katex/katex.min.js') or ''
@@ -522,6 +532,10 @@ function H.render_page(doc, opts)
       .. '\n[data-theme="dark"] {' .. hl_dark .. '}\n' .. mw_css .. '</style>'
     foot_assets[#foot_assets + 1] = '<script>' .. katex_js .. '</script>'
     foot_assets[#foot_assets + 1] = '<script>' .. hl_js .. '</script>'
+    for _, lang in ipairs({ 'julia', 'r', 'latex', 'rust', 'go', 'matlab', 'haskell' }) do
+      local language_js = U.read_file(root_dir .. '/vendor/highlight/' .. lang .. '.min.js')
+      if language_js then foot_assets[#foot_assets + 1] = '<script>' .. language_js .. '</script>' end
+    end
   else
     head_assets[#head_assets + 1] = '<link rel="stylesheet" href="' .. esc(prefix .. '/katex/katex.min.css') .. '">'
     head_assets[#head_assets + 1] = '<link rel="stylesheet" href="' .. esc(prefix .. '/highlight/github.min.css') .. '" media="(prefers-color-scheme: light)">'
