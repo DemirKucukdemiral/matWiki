@@ -7,13 +7,18 @@ Press Space then `?` for the searchable command palette.
 
 ## Try a linked note
 
-Put the cursor anywhere inside [[linear-algebra|Linear algebra]], then press
-Space `no`. Go back with Ctrl-o. Space `nb` shows the notes linking here.
+Put the cursor anywhere inside [[spectral-workbench.mw|Spectral Theorem Workbench (.mw)]]
+or [[linear-algebra|Linear algebra]], then press Space `no`. Go back with Ctrl-o.
+Space `nb` shows the notes linking here.
 
-Use Space `nn` for a new Markdown note, Space `nx` for a full LaTeX note,
-or Space `nd` for today's daily note. Space `nf` finds notes by name;
-Space `ns` searches their contents. Links use `[[note-name]]` or
+Use Space `nw` for a new `.mw` (MatWiki) note combining Markdown, numbered LaTeX,
+theorems, and Jupyter-style cells; Space `nn` for a Markdown note; Space `nx` for
+a full LaTeX note; or Space `nd` for today's daily note. Space `nf` finds notes by
+name; Space `ns` searches their contents. Links use `[[note-name]]` or
 `[[folder/note-name|display text]]`.
+
+Press Space `mp` to open a live HTML + CSS preview in your browser, Space `me` to
+compile the current note to HTML, or Space `mE` to export the entire notebook site.
 
 ## Write mathematics
 

@@ -22,6 +22,7 @@ function M.setup(opts)
   require('matwiki.wiki').setup(c)
   require('matwiki.runner').setup(c)
   require('matwiki.latex').setup(c)
+  require('matwiki.mw').setup(c)
   require('matwiki.coding').setup(c)
   vim.api.nvim_create_user_command('MatwikiHome', function() require('matwiki.ui').dashboard(c) end, {})
   vim.api.nvim_create_user_command('MatwikiHelp', function()
@@ -77,6 +78,7 @@ function M.setup(opts)
 end
 
 M.actions = {
+  { 'nw', 'New MatWiki (.mw) note', 'MatwikiMw' },
   { 'nn', 'New Markdown note', 'MatwikiNew' },
   { 'nx', 'New LaTeX note', 'MatwikiTex' },
   { 'nd', 'Today’s daily note', 'MatwikiDaily' },
@@ -87,12 +89,18 @@ M.actions = {
   { 'nb', 'Show backlinks', 'MatwikiBacklinks' },
   { 'nh', 'Notebook home', 'MatwikiHome' },
   { 'ne', 'Browse files and code', 'MatwikiFiles' },
+  { 'mp', 'Live HTML preview (.mw / .md)', 'MatwikiPreview' },
+  { 'me', 'Export note to HTML + CSS', 'MatwikiExport' },
+  { 'mE', 'Export entire notebook site', 'MatwikiExportVault' },
   { 'mb', 'Build PDF', 'MatwikiBuild' },
   { 'mv', 'View PDF', 'MatwikiView' },
   { 'mw', 'Toggle build on save', 'MatwikiWatch' },
   { 'ms', 'Insert maths snippet', 'MatwikiSnippet' },
   { 'mx', 'Stop PDF build', 'MatwikiLatexStop' },
   { 'rr', 'Run current code block / file', 'MatwikiRun' },
+  { 'ra', 'Run all code cells in note', 'MatwikiRunAll' },
+  { 'rc', 'Clear cell outputs in note', 'MatwikiClearOutputs' },
+  { 'rk', 'Restart persistent kernel', 'MatwikiKernelRestart' },
   { 're', 'Edit code block in language buffer', 'MatwikiEditBlock' },
   { 'rs', 'Stop running code', 'MatwikiStop' },
   { 'rt', 'Open terminal', 'MatwikiTerminal' },

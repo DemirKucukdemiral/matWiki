@@ -79,7 +79,7 @@ local function valid_target(target)
   return true
 end
 
----Sorted absolute paths to Markdown and TeX notes, excluding hidden/build/code dirs.
+---Sorted absolute paths to .mw, Markdown, and TeX notes, excluding hidden/build/code/.assets dirs.
 function M.files()
   if not root then return {} end
   local result, seen = {}, {}
@@ -91,9 +91,10 @@ function M.files()
       if not name then break end
       if name:sub(1, 1) ~= "." then
         local path = dir .. "/" .. name
-        if kind == "directory" and not excluded[name] then
+        if kind == "directory" and not excluded[name] and not name:match("%.assets$") then
           walk(path)
-        elseif (kind == "file" or kind == "link") and (name:match("%.md$") or name:match("%.tex$")) then
+        elseif (kind == "file" or kind == "link")
+          and (name:match("%.mw$") or name:match("%.md$") or name:match("%.tex$")) then
           local resolved = safe_path(path, true)
           local stat = resolved and uv.fs_stat(resolved)
           if resolved and stat and stat.type == "file" and not seen[resolved] then
@@ -116,7 +117,7 @@ function M.resolve(target, source, known_files)
   target = parse_target(target)
   local valid, err = valid_target(target)
   if not valid then return {}, err end
-  local extension = target:match("%.(md)$") or target:match("%.(tex)$")
+  local extension = target:match("%.(mw)$") or target:match("%.(md)$") or target:match("%.(tex)$")
   local candidates, result, seen = {}, {}, {}
   local names = { [target] = true }
   local bare_target = extension and target:gsub("%.%w+$", "") or target
@@ -133,6 +134,7 @@ function M.resolve(target, source, known_files)
     if extension then
       add(path)
     else
+      add(path .. ".mw")
       add(path .. ".md")
       add(path .. ".tex")
     end
@@ -162,6 +164,7 @@ local function tex_escape(text)
 end
 
 local builtin = {
+  mw = "---\ntitle: {{title}}\ndate: {{date}}\nkernel: python\n---\n\n# {{title}}\n\n## Notes\n\n\n## Connections\n\n",
   markdown = "# {{title}}\n\nCreated: {{date}}\n\n## Notes\n\n\n## Links\n\n",
   daily = "# {{title}}\n\n## Focus\n\n- [ ] \n\n## Notes\n\n\n## Links\n\n",
   tex = [=[\documentclass[11pt]{article}
@@ -208,7 +211,7 @@ end
 local function template(kind, title)
   local text = builtin[kind]
   if config.templates_dir then
-    local name = kind == "tex" and "tex.tex" or (kind .. ".md")
+    local name = kind == "tex" and "tex.tex" or (kind == "mw" and "mw.mw") or (kind .. ".md")
     local path = vim.fs.normalize(vim.fn.expand(config.templates_dir)) .. "/" .. name
     if uv.fs_stat(path) then text = table.concat(read_lines(path), "\n") .. "\n" end
   end
@@ -256,14 +259,16 @@ function M.new(kind, title)
     return create("daily", os.date("%A, %d %B %Y"), root .. "/daily/" .. os.date("%Y-%m-%d") .. ".md")
   end
   if not title then
-    vim.ui.input({ prompt = kind == "tex" and "TeX note title: " or "Note title: " }, function(value)
+    local prompt = kind == "tex" and "TeX note title: " or (kind == "mw" and "MatWiki (.mw) note title: " or "Note title: ")
+    vim.ui.input({ prompt = prompt }, function(value)
       if value and vim.trim(value) ~= "" then M.new(kind, value) end
     end)
     return
   end
   title = vim.trim(title:gsub("[\r\n]", " "))
   if title == "" then return end
-  return create(kind, title, root .. "/" .. M.slugify(title) .. (kind == "tex" and ".tex" or ".md"))
+  local ext = kind == "tex" and ".tex" or (kind == "mw" and ".mw" or ".md")
+  return create(kind, title, root .. "/" .. M.slugify(title) .. ext)
 end
 
 function M.daily() return M.new("daily") end
@@ -338,11 +343,16 @@ local function jump_anchor(anchor)
   local wanted = M.slugify(anchor)
   for row, line in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do
     local heading = line:match("^#+%s+(.+)")
-    if heading and M.slugify(heading:gsub("%s+#+%s*$", "")) == wanted then
+    if heading and M.slugify(heading:gsub("%s*%b{}%s*$", ""):gsub("%s+#+%s*$", "")) == wanted then
       vim.api.nvim_win_set_cursor(0, { row, 0 })
       return
     end
-    if line:find("\\label{" .. anchor .. "}", 1, true) then vim.api.nvim_win_set_cursor(0, { row, 0 }); return end
+    if line:find("\\label{" .. anchor .. "}", 1, true)
+      or line:find("{#" .. anchor .. "}", 1, true)
+      or line:find("{#" .. anchor .. " ", 1, true) then
+      vim.api.nvim_win_set_cursor(0, { row, 0 })
+      return
+    end
   end
   notify("Note opened; heading or label not found: " .. anchor, vim.log.levels.WARN)
 end
@@ -362,8 +372,11 @@ function M.follow_link(target)
       if item then visit(item.value) end
     end)
   end
-  local extension = destination:match("%.(tex)$") and ".tex" or ".md"
-  local name = destination:gsub("%.md$", ""):gsub("%.tex$", "")
+  local extension = destination:match("%.(tex)$") and ".tex"
+    or (destination:match("%.(mw)$") and ".mw")
+    or (source:match("%.mw$") and not destination:match("%.(md)$") and ".mw")
+    or ".md"
+  local name = destination:gsub("%.mw$", ""):gsub("%.md$", ""):gsub("%.tex$", "")
   local parent = vim.fs.dirname(name)
   if parent == "." then parent = "" end
   local stem = M.slugify(vim.fs.basename(name))
@@ -372,7 +385,8 @@ function M.follow_link(target)
   if not safe then notify(safe_err, vim.log.levels.ERROR); return end
   vim.ui.select({ "Create " .. relative_new, "Cancel" }, { prompt = "This note does not exist." }, function(_, index)
     if index == 1 then
-      create(extension == ".tex" and "tex" or "markdown", (target:match("|(.+)$") or vim.fs.basename(name)), safe)
+      local kind = extension == ".tex" and "tex" or (extension == ".mw" and "mw" or "markdown")
+      create(kind, (target:match("|(.+)$") or vim.fs.basename(name)), safe)
     end
   end)
 end
@@ -422,6 +436,7 @@ function M.setup(options)
   vim.fn.mkdir(requested, "p")
   root = normalize(assert(uv.fs_realpath(requested), "Cannot access the MatWiki vault"))
   local commands = {
+    MatwikiMw = { function(args) M.new("mw", args.args ~= "" and args.args or nil) end, "*" },
     MatwikiNew = { function(args) M.new("markdown", args.args ~= "" and args.args or nil) end, "*" },
     MatwikiTex = { function(args) M.new("tex", args.args ~= "" and args.args or nil) end, "*" },
     MatwikiDaily = { M.daily, 0 }, MatwikiFind = { M.find, 0 },

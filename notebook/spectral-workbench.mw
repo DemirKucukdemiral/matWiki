@@ -1,0 +1,94 @@
+---
+title: Spectral Theorem Workbench
+subtitle: Markdown + LaTeX + Jupyter-style cells in a single .mw note
+author: MatWiki
+date: 2026-10-20
+kernel: python
+number-sections: true
+tags: [linear-algebra, spectral-theory, notebook]
+macros:
+  \Sym: "\\operatorname{Sym}_n(\\mathbb{R})"
+  \diag: "\\operatorname{diag}"
+abstract: |
+  A demonstration of the `.mw` format combining Markdown prose, numbered LaTeX equations
+  and theorem environments, cross-references, wiki links, and executable Python cells
+  whose outputs live directly inside the plain-text file.
+---
+
+# Self-Adjoint Operators & Quadratic Forms {#sec:intro}
+
+Let $A \in \Sym$ be a real symmetric $n \times n$ matrix ($A = A^\mathsf{T}$).
+See [[linear-algebra|Linear algebra notes]] and the full LaTeX proof in [[spectral-theorem.tex]].
+With the standard inner product $\inner{x}{y} = \sum_{i=1}^n x_i y_i$ on $\R^n$, symmetry is equivalent to the self-adjoint identity:
+
+$$
+\inner{Ax}{y} = \inner{x}{Ay} \quad \forall x, y \in \R^n.
+$$ {#eq:selfadj}
+
+Associated with $A$ is the **Rayleigh quotient** $R_A : \R^n \setminus \{0\} \to \R$:
+
+\begin{equation}
+\label{eq:rayleigh}
+R_A(x) = \frac{\inner{Ax}{x}}{\norm{x}^2}.
+\end{equation}
+
+::: definition {#def:rayleigh title="Extremal Rayleigh values"}
+For $A \in \Sym$, define $\lambda_{\min}(A) = \min_{x \ne 0} R_A(x)$ and $\lambda_{\max}(A) = \max_{x \ne 0} R_A(x)$ via @eq:rayleigh.
+:::
+
+::: theorem {#thm:spectral title="Real Spectral Theorem"}
+Every real symmetric matrix $A \in \Sym$ admits an orthogonal decomposition
+$A = Q \Lambda Q^\mathsf{T}$ where $Q^\mathsf{T} Q = I_n$ and $\Lambda = \diag(\lambda_1, \dots, \lambda_n) \in \R^{n\times n}$.
+:::
+
+::: proof
+By @eq:selfadj, every eigenvalue of $A$ is real and eigenvectors corresponding to distinct eigenvalues are orthogonal. Proceeding by induction on $n$ on the invariant subspace $v_1^\perp$ completes the decomposition.
+:::
+
+::: note {title="Interactive workflow"}
+Place the cursor inside any code fence below and press `Space rr` (`:MatwikiRun`) to run that cell and update its `output` block in-place, or `Space ra` (`:MatwikiRunAll`) to run the whole note. Press `Space mp` (`:MatwikiPreview`) for live HTML + CSS preview.
+:::
+
+# Numerical Verification in Python {#sec:experiments}
+
+As proved in @thm:spectral, we can verify orthogonality and Rayleigh quotient bounds (@def:rayleigh) numerically. Variables defined in @cell:setup persist into @cell:verify.
+
+```python {#cell:setup}
+import math
+
+# Symmetric 3x3 tridiagonal Toeplitz matrix
+A = [
+    [ 2.0, -1.0,  0.0],
+    [-1.0,  2.0, -1.0],
+    [ 0.0, -1.0,  2.0],
+]
+expected_eigs = [2.0 - math.sqrt(2.0), 2.0, 2.0 + math.sqrt(2.0)]
+print("Theoretical eigenvalues:", [round(w, 6) for w in expected_eigs])
+```
+```output {of=cell:setup}
+Theoretical eigenvalues: [0.585786, 2.0, 3.414214]
+```
+
+Now we check the eigenvector $v_1 = (1, \sqrt{2}, 1)^\mathsf{T}$ using the state from @cell:setup:
+
+```python {#cell:verify}
+v = [1.0, math.sqrt(2.0), 1.0]
+Av = [sum(A[i][j] * v[j] for j in range(3)) for i in range(3)]
+vv = sum(x * x for x in v)
+rayleigh = sum(Av[i] * v[i] for i in range(3)) / vv
+residual = math.sqrt(sum((Av[i] - rayleigh * v[i]) ** 2 for i in range(3)))
+print(f"Rayleigh quotient R_A(v) = {rayleigh:.6f}")
+print(f"Residual ||Av - λv||_2   = {residual:.2e}")
+```
+```output {of=cell:verify}
+Rayleigh quotient R_A(v) = 0.585786
+Residual ||Av - λv||_2   = 0.00e+00
+```
+
+| Mode $k$ | Eigenvalue $\lambda_k = 2 - 2\cos(k\pi/4)$ | Numerical value |
+| :--- | :---: | ---: |
+| $k = 1$ | $2 - \sqrt{2}$ | $0.585786$ |
+| $k = 2$ | $2$ | $2.000000$ |
+| $k = 3$ | $2 + \sqrt{2}$ | $3.414214$ |
+
+: Spectrum of the $3 \times 3$ discrete Laplacian (see @thm:spectral). {#tbl:spectrum}

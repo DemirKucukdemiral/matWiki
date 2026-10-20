@@ -1,4 +1,6 @@
 .state/
+.site/
+**/.site/
 .matwiki-build/
 **/.matwiki-build/
 *.swp

@@ -152,15 +152,42 @@ end
 function M.run()
   local source = vim.api.nvim_get_current_buf()
   local lines = vim.api.nvim_buf_get_lines(source, 0, -1, false)
-  local language = vim.bo[source].filetype:lower()
-  if language == 'markdown' or language == 'quarto' or language == 'rmd' then
-    local block, err = find_block(lines, vim.api.nvim_win_get_cursor(0)[1] - 1)
+  local ft = vim.bo[source].filetype:lower()
+  local is_mw = ft == 'mw' or vim.api.nvim_buf_get_name(source):match('%.mw$') ~= nil
+  local language = ft
+  local block
+  if ft == 'markdown' or ft == 'mw' or ft == 'quarto' or ft == 'rmd' or is_mw then
+    local err
+    block, err = find_block(lines, vim.api.nvim_win_get_cursor(0)[1] - 1)
     if not block then return fail(err) end
     lines, language = block.code, block.language
   elseif state.editors[source] then
     language = state.editors[source].language
   end
   if language == '' then return fail('Add a language to the code fence, for example ```python.') end
+  if language == 'output' or language == 'result' or language == 'results' then
+    return fail('Place the cursor inside a code cell, not its output block.')
+  end
+
+  -- In .mw buffers, use persistent kernel for Python/Node unless custom runner or session=none.
+  local ok_k, kernel = pcall(require, 'matwiki.mw.kernel')
+  local attrs = block and require('matwiki.mw.util').parse_attrs(block.rest:match('%b{}')) or { kv = {} }
+  if is_mw and block and ok_k and kernel.supports(language) and attrs.kv.session ~= 'none' then
+    state.generation = state.generation + 1
+    local current = { generation = state.generation, lines = 0, bytes = 0 }
+    state.job = current
+    kernel.eval(source, language, lines, { session = attrs.kv.session, cell = 1 }, function(res)
+      if current.generation ~= state.generation then return end
+      current.exit_code = res.ok and 0 or 1
+      state.last_run = current
+      state.job = nil
+      set_output(vim.list_extend({ 'MatWiki · ' .. language .. ' (kernel)', '' }, res.lines or {}))
+      require('matwiki.mw').write_cell_output(source, block.open_row, res.lines or {}, { error = not res.ok })
+      pcall(function() require('matwiki.mw.server').broadcast() end)
+    end)
+    return 1
+  end
+
   local runner = cfg.runners[language]
   if not runner then return fail('No runner for ' .. language .. '. Add an argv list to config.runners.' ) end
   local file = cache_file(language, 'runs')
@@ -172,6 +199,7 @@ function M.run()
   if not wrote then return fail('Could not create script: ' .. tostring(write_error)) end
   M.stop()
   state.generation = state.generation + 1
+  local captured = {}
   local current = { generation = state.generation, file = file, partial = { stdout = '', stderr = '' }, bytes = 0, lines = 0 }
   state.job = current
   set_output({ 'MatWiki · ' .. language, 'cwd: ' .. cwd, 'argv: ' .. vim.inspect(argv), '' })
@@ -190,6 +218,7 @@ function M.run()
     local clipped = line:sub(1, remaining)
     current.bytes = current.bytes + #clipped + 1
     current.lines = current.lines + 1
+    captured[#captured + 1] = clipped
     append_output({ clipped })
     if #line > #clipped then
       current.truncated = true
@@ -224,6 +253,10 @@ function M.run()
       end
       current.exit_code = code
       append_output({ '', current.cancelled and '[Stopped · exit ' .. code .. ']' or '[Exit ' .. code .. ']' })
+      if is_mw and block and not current.cancelled then
+        require('matwiki.mw').write_cell_output(source, block.open_row, captured, { error = code ~= 0 })
+        pcall(function() require('matwiki.mw.server').broadcast() end)
+      end
       state.last_run = current
       state.job = nil
     end,
@@ -236,6 +269,58 @@ function M.run()
   end
   current.id = id
   return id
+end
+
+function M.run_all()
+  local source = vim.api.nvim_get_current_buf()
+  local mw = require('matwiki.mw')
+  local kernel = require('matwiki.mw.kernel')
+  local idx = 1
+  local function step()
+    if not vim.api.nvim_buf_is_valid(source) then return end
+    local cells = mw.find_cells(vim.api.nvim_buf_get_lines(source, 0, -1, false))
+    while idx <= #cells do
+      local c = cells[idx]
+      local run_opt = c.attrs and c.attrs.kv and c.attrs.kv.run
+      if c.lang ~= '' and run_opt ~= 'never' and run_opt ~= 'false' and run_opt ~= 'manual' then
+        local current_idx = idx
+        idx = idx + 1
+        if kernel.supports(c.lang) and (not c.attrs.kv or c.attrs.kv.session ~= 'none') then
+          kernel.eval(source, c.lang, c.code, { cell = current_idx }, function(res)
+            mw.write_cell_output(source, c.open_row, res.lines or {}, { error = not res.ok })
+            step()
+          end)
+          return
+        elseif cfg.runners[c.lang] then
+          local file = cache_file(c.lang, 'runs')
+          local argv = argv_for(cfg.runners[c.lang], file)
+          if argv and vim.fn.executable(argv[1]) == 1 then
+            vim.fn.writefile(c.code, file)
+            vim.system(argv, { cwd = cwd_for(source), text = true }, function(res)
+              vim.schedule(function()
+                vim.fn.delete(file)
+                local out = ((res.stdout or '') .. (res.stderr or '')):gsub('\r\n', '\n')
+                local out_lines = out ~= '' and vim.split(out:gsub('\n$', ''), '\n', { plain = true }) or {}
+                mw.write_cell_output(source, c.open_row, out_lines, { error = res.code ~= 0 })
+                step()
+              end)
+            end)
+            return
+          end
+        end
+      else
+        idx = idx + 1
+      end
+    end
+    pcall(function() require('matwiki.mw.server').broadcast() end)
+    vim.notify('MatWiki: Finished running all cells.')
+  end
+  step()
+end
+
+function M.restart_kernel()
+  local n = require('matwiki.mw.kernel').restart(vim.api.nvim_get_current_buf())
+  vim.notify('MatWiki: Restarted ' .. n .. ' kernel session(s).')
 end
 
 function M.edit_block()
@@ -332,6 +417,8 @@ function M.setup(config)
   }
   for _, spec in ipairs({
     { 'MatwikiRun', M.run, 'Run this code fence or code buffer' },
+    { 'MatwikiRunAll', M.run_all, 'Run all code cells in this note' },
+    { 'MatwikiKernelRestart', M.restart_kernel, 'Restart persistent kernel sessions for this note' },
     { 'MatwikiEditBlock', M.edit_block, 'Edit this code fence with language tooling' },
     { 'MatwikiStop', M.stop, 'Stop the active code runner' },
     { 'MatwikiTerminal', M.terminal, 'Open a shell in the note vault' },

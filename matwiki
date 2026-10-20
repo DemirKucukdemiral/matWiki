@@ -1,7 +1,8 @@
 #!/bin/sh
 # Portable launcher. All app state stays beside MatWiki unless overridden.
 set -eu
-MATWIKI_HOME=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || printf '%s\n' "$0")
+MATWIKI_HOME=$(CDPATH='' cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)
 export MATWIKI_HOME
 export MATWIKI_STATE_DIR="${MATWIKI_STATE_DIR:-$MATWIKI_HOME/.state}"
 export NVIM_APPNAME=matwiki
@@ -17,15 +18,24 @@ while [ "$#" -gt 0 ]; do
       shift 2 ;;
     --doctor) exec python3 "$MATWIKI_HOME/scripts/doctor.py" ;;
     --test) exec sh "$MATWIKI_HOME/tests/run.sh" ;;
+    --export)
+      shift
+      exec nvim --headless -u NONE -l "$MATWIKI_HOME/scripts/export.lua" --single "$@" ;;
+    --export-all)
+      shift
+      exec nvim --headless -u NONE -l "$MATWIKI_HOME/scripts/export.lua" --all "$@" ;;
     --help|-h)
       cat <<'EOF'
-MatWiki — a local maths notebook inside Neovim
+MatWiki — a local maths & computational notebook inside Neovim
 
-  ./matwiki                       Open the notebook dashboard
-  ./matwiki --vault /path/to/notes  Use another notebook
-  ./matwiki /absolute/path.tex     Open a file
-  ./matwiki --doctor               Check installed tools
-  ./matwiki --test                 Run the integration tests
+  ./matwiki                                    Open the notebook dashboard
+  ./matwiki --vault /path/to/notes             Use another notebook
+  ./matwiki /absolute/path.mw                  Open a .mw, .md, or .tex note
+  ./matwiki --export note.mw [-o out.html]     Compile a .mw/.md note to HTML + CSS
+  ./matwiki --export note.mw --standalone      Compile a self-contained single-file HTML
+  ./matwiki --export-all [site_dir]            Compile the entire notebook to an HTML site
+  ./matwiki --doctor                           Check installed tools
+  ./matwiki --test                             Run the integration tests
 
 Requires Neovim 0.12.4+. See README.md for macOS and Linux setup.
 Space ? opens the command palette. :MatwikiHelp opens the guide.

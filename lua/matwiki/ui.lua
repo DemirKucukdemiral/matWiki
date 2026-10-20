@@ -76,7 +76,7 @@ function M.setup(c)
   for name, value in pairs(groups) do vim.api.nvim_set_hl(0, name, value) end
   local group = vim.api.nvim_create_augroup('MatwikiEditing', { clear = true })
   vim.api.nvim_create_autocmd('FileType', {
-    group = group, pattern = { 'markdown', 'tex', 'plaintex' }, callback = function()
+    group = group, pattern = { 'mw', 'markdown', 'tex', 'plaintex' }, callback = function()
       vim.opt_local.wrap = true
       vim.opt_local.linebreak = true
       vim.opt_local.spell = false
@@ -94,9 +94,10 @@ function M.dashboard(c)
     '', '  M A T W I K I', '  A notebook for thinking in mathematics.', '',
     '  LOCAL WORKSPACE', '  ' .. c.vault, '',
     '  WRITE                         EXPLORE',
-    '  n   New note                  f   Find a note',
-    '  x   New LaTeX note            s   Search contents',
-    '  d   Today’s note              e   Files & code', '',
+    '  w   New .mw note              f   Find a note',
+    '  n   New Markdown note         s   Search contents',
+    '  x   New LaTeX note            e   Files & code',
+    '  d   Today’s note              p   Export HTML site', '',
     '  CONTINUE',
   }
   local recent = {}
@@ -111,10 +112,10 @@ function M.dashboard(c)
   for i = 1, math.min(5, #recent) do
     lines[#lines + 1] = ('  %d   %s'):format(i, recent[i].path:sub(#c.vault + 2))
   end
-  if #recent == 0 then lines[#lines + 1] = '  Your notebook is empty. Press n to begin.' end
+  if #recent == 0 then lines[#lines + 1] = '  Your notebook is empty. Press w or n to begin.' end
   vim.list_extend(lines, { '', '  ?   Command palette           h   Getting started',
     '  c   Configure MatWiki         D   Check dependencies', '',
-    ('  %d notes  /  Markdown + LaTeX  /  Neovim'):format(#files),
+    ('  %d notes  /  .mw + Markdown + LaTeX  /  Neovim'):format(#files),
     '  Press i in a note to write. Escape returns to normal mode.', '' })
   local buf = scratch('home', lines)
   vim.wo.number, vim.wo.relativenumber, vim.wo.signcolumn = false, false, 'no'
@@ -127,8 +128,8 @@ function M.dashboard(c)
       vim.api.nvim_buf_set_extmark(buf, ns, i - 1, 2, { end_col = 3, hl_group = 'MatwikiKey' })
     end
   end
-  local commands = { n = 'MatwikiNew', x = 'MatwikiTex', d = 'MatwikiDaily', f = 'MatwikiFind',
-    s = 'MatwikiSearch', e = 'MatwikiFiles', ['?'] = 'MatwikiCommands', h = 'MatwikiHelp',
+  local commands = { w = 'MatwikiMw', n = 'MatwikiNew', x = 'MatwikiTex', d = 'MatwikiDaily', f = 'MatwikiFind',
+    s = 'MatwikiSearch', e = 'MatwikiFiles', p = 'MatwikiExportVault', ['?'] = 'MatwikiCommands', h = 'MatwikiHelp',
     c = 'MatwikiConfig', D = 'MatwikiDoctor' }
   for key, command in pairs(commands) do
     vim.keymap.set('n', key, '<cmd>' .. command .. '<cr>', { buffer = buf, nowait = true })
