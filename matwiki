@@ -17,7 +17,16 @@ while [ -L "$SCRIPT_PATH" ]; do
 done
 MATWIKI_HOME=$(CDPATH='' cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)
 export MATWIKI_HOME
-export MATWIKI_STATE_DIR="${MATWIKI_STATE_DIR:-$MATWIKI_HOME/.state}"
+case "$MATWIKI_HOME" in
+  */Cellar/*|*/homebrew/*|/usr/*|/opt/*)
+    DEFAULT_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/matwiki"
+    export MATWIKI_SYSTEM_INSTALL=1
+    ;;
+  *)
+    DEFAULT_STATE_DIR="$MATWIKI_HOME/.state"
+    ;;
+esac
+export MATWIKI_STATE_DIR="${MATWIKI_STATE_DIR:-$DEFAULT_STATE_DIR}"
 export NVIM_APPNAME=matwiki
 export XDG_CONFIG_HOME="$MATWIKI_STATE_DIR/config"
 export XDG_DATA_HOME="$MATWIKI_STATE_DIR/data"

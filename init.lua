@@ -17,6 +17,15 @@ vim.opt.packpath = vim.opt.runtimepath:get()
 vim.g.mapleader = ' '
 vim.g.maplocalleader = ','
 local config = {}
+local system_install = vim.env.MATWIKI_SYSTEM_INSTALL == '1'
+if system_install and not vim.env.MATWIKI_CONFIG and vim.env.MATWIKI_STATE_DIR then
+  local user_cfg = vim.env.MATWIKI_STATE_DIR .. '/user.lua'
+  if vim.fn.filereadable(user_cfg) == 0 and vim.fn.filereadable(root .. '/user.lua') == 1 then
+    vim.fn.mkdir(vim.env.MATWIKI_STATE_DIR, 'p')
+    pcall(vim.fn.writefile, vim.fn.readfile(root .. '/user.lua'), user_cfg)
+  end
+  vim.env.MATWIKI_CONFIG = user_cfg
+end
 local config_path = vim.env.MATWIKI_CONFIG or root .. '/user.lua'
 if vim.fn.filereadable(config_path) == 1 then
   local ok, value = pcall(dofile, config_path)
@@ -36,5 +45,6 @@ end
 config.root = root
 config.standalone = true
 -- Explicit CLI/environment vault wins over user.lua.
-config.vault = vim.env.MATWIKI_VAULT or config.vault or root .. '/notebook'
+local default_vault = system_install and vim.fn.expand('~/Documents/MatWiki') or (root .. '/notebook')
+config.vault = vim.env.MATWIKI_VAULT or config.vault or default_vault
 require('matwiki').setup(config)

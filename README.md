@@ -2,19 +2,33 @@
 
 MatWiki is a fast, local-first mathematics and computational notebook inside Neovim. It supports **`.mw` (MatWiki)** notes—combining Markdown prose, numbered LaTeX equations and theorem environments, `[[wiki-links]]`, and Jupyter-style executable code cells—alongside standard `.md` and `.tex` files, and compiles `.mw` / `.md` notes to offline HTML + CSS in milliseconds.
 
+## Installation
+
+**Homebrew (macOS & Linux):**
+```sh
+brew tap DemirKucukdemiral/matwiki https://github.com/DemirKucukdemiral/matWiki.git
+brew install matwiki
+```
+
+**From source (`git clone`):**
+```sh
+git clone https://github.com/DemirKucukdemiral/matWiki.git ~/matWiki
+mkdir -p ~/.local/bin && ln -sf ~/matWiki/matwiki ~/.local/bin/matwiki
+```
+
 ## Quick Start
 
 ```sh
-./matwiki                                  # Open the MatWiki dashboard in Neovim
-./matwiki notebook/spectral-workbench.mw   # Open the sample .mw notebook
-./matwiki --export notebook/spectral-workbench.mw
-./matwiki --export notebook/spectral-workbench.mw --standalone
-./matwiki --export-all                     # Build the entire notebook to notebook/.site/index.html
-./matwiki --doctor                         # Check installed optional tools
-./matwiki --test                           # Run the headless test suites
+matwiki                                    # Open the MatWiki dashboard in Neovim
+matwiki notebook/spectral-workbench.mw     # Open the sample .mw notebook
+matwiki --export notebook/spectral-workbench.mw
+matwiki --export notebook/spectral-workbench.mw --standalone
+matwiki --export-all                       # Build the entire notebook to notebook/.site/index.html
+matwiki --doctor                           # Check installed optional tools
+matwiki --test                             # Run the headless test suites
 ```
 
- MatWiki keeps all Neovim state in `.state/` beside the launcher and never modifies `~/.config/nvim`.
+MatWiki keeps all Neovim state isolated and never modifies `~/.config/nvim`.
 
 ## Essential Shortcuts (`Space` is leader)
 
@@ -25,6 +39,8 @@ MatWiki is a fast, local-first mathematics and computational notebook inside Neo
 | `Space nn` | `:MatwikiNew` | Create or open a Markdown (`.md`) note |
 | `Space nx` | `:MatwikiTex` | Create or open a LaTeX (`.tex`) note |
 | `Space ng` | `:MatwikiFolder` | Create or open a folder, including nested folders |
+| `Space nv` | `:MatwikiVault` | Switch to or create another Git-backed vault |
+| `Space ny` | `:MatwikiSync` | Commit and sync the current vault with Git |
 | `Space nd` | `:MatwikiDaily` | Open today's daily note |
 | `Space nf` | `:MatwikiFind` | Fuzzy-find a note in the vault |
 | `Space ns` | `:MatwikiSearch` | Search note contents |
